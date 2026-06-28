@@ -2443,7 +2443,7 @@ function initApp() {
     document.querySelectorAll('.lock-cover').forEach(cover => {
         const handleLockClick = (e) => {
             e.stopPropagation();
-            window.open('https://booth.pm', '_blank');
+            window.open('https://yosie-lab.booth.pm/items/8508896', '_blank');
         };
         cover.addEventListener('click', handleLockClick);
         cover.addEventListener('touchend', (e) => {
@@ -2451,6 +2451,20 @@ function initApp() {
             handleLockClick(e);
         }, { passive: false });
     });
+
+    // 体験版終了モーダルの購入ボタン（タッチ時の不具合対策）
+    const btnDemoPurchase = document.getElementById('btn-demo-purchase');
+    if (btnDemoPurchase) {
+        const handlePurchaseClick = (e) => {
+            e.stopPropagation();
+            window.open('https://yosie-lab.booth.pm/items/8508896', '_blank');
+        };
+        btnDemoPurchase.addEventListener('click', handlePurchaseClick);
+        btnDemoPurchase.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            handlePurchaseClick(e);
+        }, { passive: false });
+    }
     
     requestAnimationFrame(mainLoop);
 }
