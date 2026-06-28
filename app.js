@@ -51,8 +51,8 @@ let gyroPermissionRequested = false;
 
 // 体験版（TRIAL）用変数
 let demoTimer = null;
-let demoTimeLeft = 120;
-let trialPlayCount = parseInt(localStorage.getItem('brain_reflexo_trial_play_count') || '0', 10);
+let demoTimeLeft = 90;
+let trialPlayCount = parseInt(sessionStorage.getItem('brain_reflexo_trial_play_count') || '0', 10);
 
 // 繧ｳ繝ｳ繝懃ｮ｡逅
 // 繧ｳ繝ｳ繝懃ｮ｡逅
@@ -1934,6 +1934,9 @@ function applyLangMode(mode) {
 
 
 function initApp() {
+    // 古いlocalStorageのカウント情報をクリーンアップ（テスト・初回移行対策）
+    localStorage.removeItem('brain_reflexo_trial_play_count');
+
     initShower();
     applyTheme('starry');
     setNightMode(false);
@@ -2422,9 +2425,6 @@ function initApp() {
     const btnDemoRetry = document.getElementById('btn-demo-retry');
     if (btnDemoRetry) {
         const handleDemoRetry = () => {
-            if (trialPlayCount >= 2) {
-                return;
-            }
             initAudio();
             const demoLimitOverlay = document.getElementById('demo-limit-overlay');
             if (demoLimitOverlay) demoLimitOverlay.classList.remove('active');
@@ -2511,7 +2511,7 @@ function endDemoGame(timeOut = false) {
         const descEl = overlay.querySelector('p');
         if (timeOut) {
             if (titleEl) titleEl.textContent = 'TRIAL TIME LIMIT';
-            if (descEl) descEl.innerHTML = '<span class="ja-text">体験版の制限時間（2分）に達しました</span><br class="lang-divider"><span class="en-text">You\'ve reached the trial time limit (2 min)</span>';
+            if (descEl) descEl.innerHTML = '<span class="ja-text">体験版の制限時間（90秒）に達しました</span><br class="lang-divider"><span class="en-text">You\'ve reached the trial time limit (90s)</span>';
         } else {
             if (titleEl) titleEl.textContent = 'REFRESH COMPLETE';
             if (descEl) descEl.innerHTML = '<span class="ja-text">脳が心地よくリフレッシュされました</span><br class="lang-divider"><span class="en-text">Your mind has been pleasantly refreshed</span>';
@@ -2519,11 +2519,7 @@ function endDemoGame(timeOut = false) {
         
         const retryBtn = document.getElementById('btn-demo-retry');
         if (retryBtn) {
-            if (trialPlayCount >= 2) {
-                retryBtn.style.display = 'none';
-            } else {
-                retryBtn.style.display = '';
-            }
+            retryBtn.style.display = '';
         }
         
         overlay.classList.add('active');
@@ -4389,19 +4385,19 @@ function startGame() {
         clearInterval(demoTimer);
         demoTimer = null;
     }
-    demoTimeLeft = 120;
+    demoTimeLeft = 90;
     const timerContainer = document.getElementById('demo-timer-container');
     const timerText = document.getElementById('demo-timer-text');
     if (timerContainer) {
         timerContainer.classList.add('active');
     }
     if (timerText) {
-        timerText.textContent = '02:00';
+        timerText.textContent = '01:30';
         timerText.classList.remove('danger');
     }
 
     trialPlayCount++;
-    localStorage.setItem('brain_reflexo_trial_play_count', trialPlayCount.toString());
+    sessionStorage.setItem('brain_reflexo_trial_play_count', trialPlayCount.toString());
 
     demoTimer = setInterval(() => {
         if (!gameActive) {
