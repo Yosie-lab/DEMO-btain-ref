@@ -2425,6 +2425,9 @@ function initApp() {
     const btnDemoRetry = document.getElementById('btn-demo-retry');
     if (btnDemoRetry) {
         const handleDemoRetry = () => {
+            if (trialPlayCount >= 2) {
+                return;
+            }
             initAudio();
             const demoLimitOverlay = document.getElementById('demo-limit-overlay');
             if (demoLimitOverlay) demoLimitOverlay.classList.remove('active');
@@ -2519,7 +2522,11 @@ function endDemoGame(timeOut = false) {
         
         const retryBtn = document.getElementById('btn-demo-retry');
         if (retryBtn) {
-            retryBtn.style.display = '';
+            if (trialPlayCount >= 2) {
+                retryBtn.style.display = 'none';
+            } else {
+                retryBtn.style.display = '';
+            }
         }
         
         overlay.classList.add('active');
