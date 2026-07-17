@@ -2691,6 +2691,7 @@ function initApp() {
     const btnDemoRetry = document.getElementById('btn-demo-retry');
     if (btnDemoRetry) {
         const handleDemoRetry = () => {
+            if (trialPlayCount >= 2) return;
             initAudio();
             const demoLimitOverlay = document.getElementById('demo-limit-overlay');
             if (demoLimitOverlay) demoLimitOverlay.classList.remove('active');
@@ -2777,7 +2778,7 @@ function endDemoGame(timeOut = false) {
         }
         const retryBtn = document.getElementById('btn-demo-retry');
         if (retryBtn) {
-            retryBtn.style.display = ''; // 再体験は常に表示（制限は90秒タイマー）
+            retryBtn.style.display = (trialPlayCount >= 2) ? 'none' : '';
         }
         overlay.classList.add('active');
     }
