@@ -1633,3 +1633,18 @@ body.lang-en .play-mode-badge {
     box-shadow: 0 6px 20px rgba(255, 42, 133, 0.5);
 }
 
+
+
+/* 体験版終了モーダル: 縦長端末でも購入ボタンまでスクロール可能に */
+#demo-limit-overlay {
+    touch-action: pan-y;
+    overscroll-behavior: contain;
+}
+#demo-limit-overlay .demo-overlay-content {
+    margin: 24px auto;
+    max-height: none;
+    touch-action: pan-y;
+}
+#demo-limit-overlay .demo-actions {
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
+}

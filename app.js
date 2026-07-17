@@ -539,7 +539,7 @@ function initShower() {
     const handleInteraction = (clientX, clientY) => {
         // モード選択・終了・ジャイロ確認など「操作を塞ぐ」オーバーレイだけブロック
         if (document.querySelector(
-            '#start-overlay.active, #gameover-overlay.active, #gyro-confirm-dialog.active, #sound-guide-dialog.active'
+            '#start-overlay.active, #gameover-overlay.active, #gyro-confirm-dialog.active, #sound-guide-dialog.active, #demo-limit-overlay.active'
         )) {
             return;
         }
@@ -555,7 +555,8 @@ function initShower() {
 
     const isElementInUI = (target) => {
         if (!target) return false;
-        return !!(target.closest && target.closest('#settings-panel, #start-overlay, #gameover-overlay, #gyro-confirm-dialog, #sound-guide-dialog, .game-actions, .btn-settings, .refresh-gauge'));
+        // demo-limit-overlay を含めないと終了画面で preventDefault されスクロール不能になる
+        return !!(target.closest && target.closest('#settings-panel, #start-overlay, #gameover-overlay, #gyro-confirm-dialog, #sound-guide-dialog, #demo-limit-overlay, .game-actions, .btn-settings, .refresh-gauge'));
     };
 
     let isDragging = false;
