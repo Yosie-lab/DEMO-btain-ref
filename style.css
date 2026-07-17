@@ -28,8 +28,6 @@ body, html {
     font-family: 'Outfit', 'Plus Jakarta Sans', 'Hiragino Kaku Gothic ProN', sans-serif;
     color: #f8fafc;
     touch-action: none; /* ダブルタップズームやピンチズーム、スクロールによるレイアウト崩れを防ぐ */
-    filter: brightness(0.99) contrast(0.98) sepia(0.02);
-    transition: filter 0.5s ease;
 }
 
 /* 背景Canvas */
@@ -41,6 +39,11 @@ body, html {
     height: 100%;
     z-index: 1;
     touch-action: none; /* キャンバス上での迅速なタップ操作による意図しないズームを防ぐ */
+    image-rendering: auto;
+    /* 独自レイヤー化して、負荷時の合成ぼかしを抑える */
+    transform: translateZ(0);
+    -webkit-transform: translateZ(0);
+    isolation: isolate;
 }
 
 /* UIコンテナ */
@@ -63,6 +66,11 @@ body, html {
 /* ボタンやリンクなどのインタラクティブ要素はクリック可能にする */
 .app-header, .game-actions, .overlay-content {
     pointer-events: auto;
+}
+
+/* プレイ中はロゴ領域がタップを奪わない（装飾のみ） */
+.app-header {
+    pointer-events: none;
 }
 
 /* =============================================================
@@ -923,9 +931,6 @@ body, html {
     text-transform: uppercase;
 }
 
-/* 呼吸ガイドのアニメーション定義（JSで進行状況に合わせてスケール制御） */
-/* 吸気(inhale): scale(1.6), 呼気(exhale): scale(0.9) */
-
 /* =============================================================
    12. リラクゼーションレポート (Zen Summary Card)
    ============================================================= */
@@ -1215,7 +1220,7 @@ body.theme-sakura {
     opacity: 0.95;
 }
 
-/* モベース高調整（iPhone SE 等） */
+/* モバイル小画面対応（iPhone SE: 667px、iPhone 12: 844px 等） */
 @media (max-height: 750px) {
     #start-overlay {
         padding-top: 12px;
@@ -1280,7 +1285,7 @@ body.theme-sakura {
     }
 }
 
-/* iPhone SE 等極小画面 */
+/* iPhone SE（375×667）などさらに小さい画面 */
 @media (max-height: 680px) {
     #start-overlay {
         padding-top: 8px;
@@ -1298,10 +1303,10 @@ body.theme-sakura {
         margin-bottom: 1px;
     }
     .how-to-desc {
-        display: none;
+        display: none; /* 極小画面では説明文を非表示 */
     }
     .start-subtitle {
-        display: none;
+        display: none; /* 極小画面ではサブタイトルを非表示 */
     }
     .mode-card {
         margin-bottom: 5px;
@@ -1312,12 +1317,8 @@ body.theme-sakura {
 }
 
 /* =============================================================
-   15. ナイトモード
+   15. ナイトモード (ブルーライトフィルター・明度調整)
    ============================================================= */
-body.night-mode {
-    filter: sepia(0.22) brightness(0.88) contrast(0.95);
-}
-
 body.night-mode::after {
     content: '';
     position: fixed;
@@ -1325,17 +1326,19 @@ body.night-mode::after {
     left: 0;
     width: 100vw;
     height: 100vh;
-    background: rgba(245, 158, 11, 0.03);
+    background: rgba(180, 120, 40, 0.14); /* 旧filter相当の温かみ＋減光をオーバーレイで代替 */
     pointer-events: none;
     z-index: 999999;
     transition: background-color 0.5s ease;
 }
 
+/* スマホ版（画面幅768px以下）の表示調整 */
 @media (max-width: 768px) {
     #shower-canvas {
         filter: none;
         transition: filter 0.5s ease;
     }
+    /* 泡のクッキリした輪郭はそのままに、眩しさのみを抑えるための極薄の温かみ（琥珀色）をオーバーレイ */
     body::before {
         content: '';
         position: fixed;
@@ -1343,25 +1346,33 @@ body.night-mode::after {
         left: 0;
         width: 100vw;
         height: 100vh;
-        background: rgba(245, 158, 11, 0.055);
+        background: rgba(245, 158, 11, 0.055); /* 目に優しいアンバー（0.028→0.055 に強化：爆発・オーロラの眩しさを緩和） */
         pointer-events: none;
-        z-index: 999998;
+        z-index: 999998; /* ナイトモード(999999)の背後に配置 */
     }
 }
 
+
+
 /* =============================================================
-   16. 言語モード
+   16. 言語モード (Language Mode)
    ============================================================= */
+
+/* 言語設定ボタングリッド: 3列に対応 */
 .lang-options-grid {
     grid-template-columns: repeat(3, 1fr) !important;
 }
 
+/* 言語モードのセクション区切り */
 .lang-mode-item {
     border-top: 1px solid rgba(255, 255, 255, 0.05);
     padding-top: 16px;
     margin-top: 4px;
 }
 
+/* ─────────────────────────────────────────
+   日本語モード: 英語テキストを非表示
+───────────────────────────────────────── */
 body.lang-ja .en-text,
 body.lang-ja .en-sub,
 body.lang-ja .logo-en,
@@ -1370,10 +1381,14 @@ body.lang-ja .lang-divider {
     display: none !important;
 }
 
+/* 呼吸ガイドの英語サブテキスト */
 body.lang-ja .breath-text .en-sub {
     display: none !important;
 }
 
+/* ─────────────────────────────────────────
+   英語モード: 日本語のみ要素を非表示
+───────────────────────────────────────── */
 body.lang-en .ja-text,
 body.lang-en .ja-only,
 body.lang-en .combo-jp,
@@ -1381,6 +1396,7 @@ body.lang-en .lang-divider {
     display: none !important;
 }
 
+/* 英語モードのスタートタイトル微調整 (脳リフレクソと同サイズかつ同じ美しいグラデーション) */
 body.lang-en .start-title .en-text {
     font-size: 32px !important;
     font-weight: 800;
@@ -1393,6 +1409,7 @@ body.lang-en .start-title .en-text {
     display: inline-block !important;
 }
 
+/* 英語モードでは combo-jp を非表示にして combo-en を大きく表示 */
 body.lang-en .combo-en {
     font-size: 36px;
     font-weight: 800;
@@ -1407,6 +1424,7 @@ body.lang-en .combo-en {
     }
 }
 
+/* 英語モードでは logo-en (英語ロゴ) を表示し、サイズを大きくしてグラデーション化 */
 body.lang-en .logo-en {
     display: block !important;
     font-size: 26px !important;
@@ -1421,6 +1439,7 @@ body.lang-en .logo-en {
     margin-top: 0;
 }
 
+/* 英語モードの呼吸ガイド: 英語サブを大きく表示 */
 body.lang-en .breath-text .en-sub {
     font-size: 16px;
     font-weight: 600;
@@ -1432,12 +1451,15 @@ body.lang-en .breath-text .ja-only {
     display: none !important;
 }
 
+/* ─────────────────────────────────────────
+   英語モードでの文字サイズ・見やすさ調整
+───────────────────────────────────────── */
 body.lang-en .btn-option .en-sub {
     font-size: 10.5px !important;
     font-weight: 600;
     opacity: 0.9;
     letter-spacing: 0.2px;
-    text-transform: none;
+    text-transform: none; /* 大文字固定を解除 */
     margin-top: 2px;
 }
 
@@ -1467,6 +1489,7 @@ body.lang-en .report-label .en-text {
     opacity: 0.9;
 }
 
+/* 英語モードのゲーム画面UI（終了ボタン・モードバッジ）のサイズと可読性向上 */
 body.lang-en .btn-quit {
     font-size: 13px !important;
     font-weight: 600;
@@ -1477,10 +1500,7 @@ body.lang-en .play-mode-badge {
     font-weight: 600;
 }
 
-/* =============================================================
-   体験版（TRIAL）制限UI用スタイル
-   ============================================================= */
-/* 右上の体験版バナー */
+/* ===== DEMO / TRIAL ===== */
 .trial-banner {
     position: fixed;
     top: 0;

@@ -1,8 +1,8 @@
 // =============================================================
-// 1. 繧ｰ繝ｭ繝ｼ繝舌Ν螳壽焚縺ｨ迥ｶ諷句､画焚
+// 1. グローバル変数と状態変数
 // =============================================================
 
-// 豕｡縺ｮ濶ｲ繝代Ξ繝ヨ医￥縺さに繝代せ繝Ν
+// 泡の色パレット（くすみパステル）
 const BUBBLE_COLORS = [
     { hex: '#81c3d7', hue: 195 },
     { hex: '#f3c68f', hue: 35  },
@@ -13,18 +13,19 @@ const BUBBLE_COLORS = [
     { hex: '#e9c46a', hue: 42  }
 ];
 
-// 豕｡縺ｮ邂｡逅
+// 泡の管理
 let bubbles = [];
-const MAX_BUBBLES = 28;
-const BUBBLE_SPAWN_MIN = 800;   // 譛€遏ｭ繧ｹ繝昴繝ｳ髢馴囈 (ms)
-const BUBBLE_SPAWN_MAX = 1500;  // 譛€髟ｷ繧ｹ繝昴繝ｳ髢馴囈 (ms)
+const MAX_BUBBLES = 34; // 画面上の泡上限（全モード共通）
+const FEVER_MAX_BUBBLES = 72; // フィーバー中の泡上限
+const BUBBLE_SPAWN_MIN = 333; // ~800/2.4
+const BUBBLE_SPAWN_MAX = 625; // 1500/2.4
 let nextSpawnTime = 0;
 
-// 蜷瑚牡3騾...]繧ｿ繝蛻､螳夂畑螻･豁ｴ
+// 同色3連タップ判定用履歴
 let tappedColorHistory = [];
-// 螟ｧ辷匱蛻､螳夂畑縺ｮ逶ｴ霑10繧ｿ繝螻･豁ｴ
+// 大量連鎖判定用の直近10タップ履歴
 let popColorHistory = [];
-// 豬∵弌鄒矣邂｡逅
+// 流れ星の管理
 let meteors = [];
 let lastShootingStarTime = Date.now();
 let nextShootingStarDelay = 10000 + Math.random() * 20000; // 初回は起動10秒〜30秒の間のランダムなタイミングで流れるよう調整
@@ -49,18 +50,18 @@ let currentGyroY = 0;
 let gyroActive = false;
 let gyroPermissionRequested = false;
 
-// 体験版（TRIAL）用変数
-let demoTimer = null;
-let demoTimeLeft = 90;
-let trialPlayCount = parseInt(sessionStorage.getItem('brain_reflexo_trial_play_count') || '0', 10);
-
-// 繧ｳ繝ｳ繝懃ｮ｡逅
-// 繧ｳ繝ｳ繝懃ｮ｡逅
+// コンボ管理
 let comboCount = 0;
 let maxComboCount = 0;
 let lastPopTime = 0;
 let gameStartTime = 0;
-const COMBO_WINDOW = 1900; // 繧ｳ繝ｳ繝懃ｶ咏ｶ壽凾髢 (ms)
+const COMBO_WINDOW = 1900;
+
+// 体験版（TRIAL）用変数
+let demoTimer = null;
+let demoTimeLeft = 90;
+let trialPlayCount = parseInt(sessionStorage.getItem('brain_reflexo_trial_play_count') || '0', 10);
+ // コンボ有効時間 (ms)
 
 // リラクゼーション設定（脳リフレクソ改用）
 let volumeBGM = 0.35;
@@ -73,10 +74,9 @@ let breathGuideEnabled = false;
 let breathCycleTime = 0;
 let breathState = 'inhale';
 let breathPattern = 'coherent'; // 'coherent' | '478' | 'box'
-let nightModeEnabled = false;
 let langMode = 'bilingual'; // 'bilingual' | 'ja' | 'en'
 
-// 繝ｪ繝輔Ξ繝す繝･繧ｲ繝ｼ繧ｸ
+// リフレッシュゲージ
 let refreshProgress = 0;
 const REFRESH_TARGET = 80; // 完了までに必要な泡のポップ数
 let totalPops = 0;
@@ -91,7 +91,6 @@ let popEffectMode = 'praise'; // デフォルト快感コメント
 
 // 音声関連
 let audioCtx = null;
-let isResuming = false;
 let ambientOscs = [];
 let ambientNodes = []; // エフェクト等中間ノード一括管理用
 let ambientGain = null;
@@ -103,7 +102,7 @@ let solfeggioGain396 = null;
 
 
 // =============================================================
-// 2. 繝槭う繝ｳ繝峨繧ｷ繝｣繝ｯ繝ｼ (閭梧勹Canvas繝代繝ぅ繧ｯ繝ｫ繧ｷ繧ｹ繝Β)
+// 2. メインシャワー（光彩Canvasパーティクルシステム）
 // =============================================================
 let showerCanvas = null;
 let showerCtx = null;
@@ -111,6 +110,10 @@ let showerParticles = [];
 let cursorTrailParticles = [];
 let showerRipples = [];
 let showerHue = 200;
+let viewW = 0; // CSS論理幅（描画・当たり判定用）
+let viewH = 0; // CSS論理高
+let canvasDpr = 1;
+let _heavyFrameStreak = 0; // 負荷検知（ぼやけ抑制用）
 
 // =============================================================
 // キャッシュ＆事前レンダリング用オブジェクト
@@ -172,13 +175,13 @@ function getBubbleTemplate(type, hue, colorHex) {
     }
     
     const canvas = document.createElement('canvas');
-    const canvasSize = 128;
+    const canvasSize = 256;
     canvas.width = canvasSize;
     canvas.height = canvasSize;
     const ctx = canvas.getContext('2d');
     
     const center = canvasSize / 2;
-    const templateRadius = 30; // 基準半径
+    const templateRadius = 60; // 基準半径（高DPI向けに2倍）
     
     ctx.save();
     ctx.translate(center, center);
@@ -410,7 +413,7 @@ function handleOrientation(event) {
     
     // 左右: -30度〜30度を -1.0〜1.0 にマッピング
     targetGyroX = Math.max(-1, Math.min(1, g / maxTilt));
-    // 前後: 通常の逆持ち角度（約55度）を基準にし、前後30度のズレを -1.0〜1.0 にマッピング
+    // 前後: 通常の縦持ち角度（約55度）を基準にし、前後30度のズレを -1.0〜1.0 にマッピング
     targetGyroY = Math.max(-1, Math.min(1, (b - 55) / maxTilt));
 }
 
@@ -441,7 +444,7 @@ function initStars() {
     if (!showerCanvas) return;
     stars = [];
     // 画面解像度に合わせて適切な星の数を計算
-    const starCount = Math.floor((showerCanvas.width * showerCanvas.height) / 7000);
+    const starCount = Math.floor((viewW * viewH) / 7000);
     const starColors = [
         'rgba(255, 255, 255, ', // 純白
         'rgba(224, 242, 254, ', // 青白い星
@@ -451,8 +454,8 @@ function initStars() {
 
     for (let i = 0; i < starCount; i++) {
         stars.push({
-            x: Math.random() * showerCanvas.width,
-            y: Math.random() * showerCanvas.height,
+            x: Math.random() * viewW,
+            y: Math.random() * viewH,
             size: Math.random() * 1.5 + 0.5, // 0.5px 〜 2px
             baseAlpha: 0.15 + Math.random() * 0.55,
             twinkleSpeed: 0.008 + Math.random() * 0.012,
@@ -528,29 +531,31 @@ function initShower() {
     initStars(); // 星屑の初期設定
     window.addEventListener('resize', resizeShowerCanvas);
     
-    // 繝槭え繧ｹ遘ｻ蜍輔〒蜈峨霆瑚ｷ｡繧堤匱逕
     const addParticleFlow = (clientX, clientY) => {
         createShowerParticles(clientX, clientY, 2);
         createCursorTrail(clientX, clientY);
     };
     
-    // 繧ｯ繝ｪ繝け上ち繝メ譎ゅ蜃ｦ逅ｼ壽ｳ｡縺があればポップ、なければ波紋
     const handleInteraction = (clientX, clientY) => {
-        if (document.querySelector('.overlay.active')) return;
+        // モード選択・終了・ジャイロ確認など「操作を塞ぐ」オーバーレイだけブロック
+        if (document.querySelector(
+            '#start-overlay.active, #gameover-overlay.active, #gyro-confirm-dialog.active, #sound-guide-dialog.active'
+        )) {
+            return;
+        }
+        if (!gameActive) return;
         
-        // 豕｡縺ｮ繝昴ャ繝励ｒ隧ｦ縺ｿ繧
         if (tryPopBubble(clientX, clientY)) {
-            return; // 豕｡繧偵繝縺励◆繧芽レ譎ｯ豕｢邏九荳崎ｦ
+            return;
         }
         
-        // 遨ｺ謖wrがあれば波紋と粒子
         createShowerRipple(clientX, clientY);
         createShowerParticles(clientX, clientY, 15);
     };
 
     const isElementInUI = (target) => {
         if (!target) return false;
-        return !!(target.closest && target.closest('#settings-panel, .overlay, .game-actions, .btn-settings, .refresh-gauge'));
+        return !!(target.closest && target.closest('#settings-panel, #start-overlay, #gameover-overlay, #gyro-confirm-dialog, #sound-guide-dialog, .game-actions, .btn-settings, .refresh-gauge'));
     };
 
     let isDragging = false;
@@ -565,9 +570,9 @@ function initShower() {
             const dy = clientY - lastDragY;
             const dist = Math.sqrt(dx * dx + dy * dy);
             
-            // 距離が12px以上の場合は中間地点を生成して判定
+            // 距離が12px以上の場合は中間地点を生成して判定（ステップ過多で固まるのを防ぐ）
             if (dist > 12) {
-                const steps = Math.ceil(dist / 12);
+                const steps = Math.min(8, Math.ceil(dist / 12));
                 for (let s = 1; s <= steps; s++) {
                     const t = s / steps;
                     const interX = lastDragX + dx * t;
@@ -613,8 +618,7 @@ function initShower() {
         isDragging = true;
         lastDragX = e.clientX;
         lastDragY = e.clientY;
-        initAudio(); // ユーザー操作による初期化
-        startAmbientSound(); // 背景アンビエント音の開始
+        initAudio();
         handleInteraction(e.clientX, e.clientY);
     });
 
@@ -636,14 +640,14 @@ function initShower() {
             e.preventDefault();
         }
         isDragging = true;
-        initAudio(); // ユーザー操作による初期化
-        startAmbientSound(); // 背景アンビエント音の開始
+        // 先にヒット判定してから音声解除（初回タップの泡反応を優先）
         if (e.touches.length > 0) {
             const touch = e.touches[0];
             lastDragX = touch.clientX;
             lastDragY = touch.clientY;
             handleInteraction(touch.clientX, touch.clientY);
         }
+        initAudio();
     }, { passive: false });
 
     window.addEventListener('touchend', () => {
@@ -670,12 +674,44 @@ function initShower() {
 
 function resizeShowerCanvas() {
     if (!showerCanvas) return;
-    showerCanvas.width = window.innerWidth;
-    showerCanvas.height = window.innerHeight;
+    const nextW = window.innerWidth;
+    const nextH = window.innerHeight;
+    // iOSのツールバー伸縮などで毎フレームリサイズすると操作不能になるため、実変化時のみ
+    const sizeChanged = Math.abs(nextW - viewW) > 8 || Math.abs(nextH - viewH) > 8 || viewW === 0;
+    if (!sizeChanged && showerCtx) return;
+
+    viewW = nextW;
+    viewH = nextH;
+    // モバイルは描画負荷を抑えつつRetinaのぼやけを緩和（上限1.5）
+    canvasDpr = Math.min(window.devicePixelRatio || 1, IS_MOBILE ? 1.5 : 2);
+    showerCanvas.style.width = viewW + 'px';
+    showerCanvas.style.height = viewH + 'px';
+    showerCanvas.width = Math.max(1, Math.round(viewW * canvasDpr));
+    showerCanvas.height = Math.max(1, Math.round(viewH * canvasDpr));
+    if (!showerCtx) {
+        showerCtx = showerCanvas.getContext('2d');
+    }
+    // 以降の描画はCSSピクセル座標で行う
+    showerCtx.setTransform(canvasDpr, 0, 0, canvasDpr, 0, 0);
+    showerCtx.imageSmoothingEnabled = true;
+    if ('imageSmoothingQuality' in showerCtx) {
+        showerCtx.imageSmoothingQuality = IS_MOBILE ? 'medium' : 'high';
+    }
     initStars(); // 画面リサイズ時に星屑を再配置
 }
 
 function createShowerParticles(x, y, count, hueBase, isSpecialEvent = false) {
+    // 泡が多いとGPUが落ちて操作不能になるため、粒子数を厳しく抑制
+    const maxParticles = IS_MOBILE ? 120 : 300;
+    if (showerParticles.length > maxParticles) {
+        showerParticles.splice(0, showerParticles.length - maxParticles);
+    }
+    const room = maxParticles - showerParticles.length;
+    if (room <= 0) return;
+    if (count > room) count = room;
+    if (bubbles.length > 20 && !isSpecialEvent) {
+        count = Math.max(2, Math.floor(count * 0.55));
+    }
     for (let i = 0; i < count; i++) {
         let particleHue;
         if (isSpecialEvent && (hueBase === null || hueBase === 'multi')) {
@@ -697,7 +733,12 @@ function createShowerParticles(x, y, count, hueBase, isSpecialEvent = false) {
         let pType = 'circle';
         if (isSpecialEvent) {
             const rand = Math.random();
-            pType = rand < 0.45 ? 'circle' : (rand < 0.85 ? 'sparkle' : 'ring');
+            // モバイルは重い sparkle/ring を減らして固まりを防ぐ
+            if (IS_MOBILE) {
+                pType = rand < 0.85 ? 'circle' : 'sparkle';
+            } else {
+                pType = rand < 0.45 ? 'circle' : (rand < 0.85 ? 'sparkle' : 'ring');
+            }
         }
         
         showerParticles.push({
@@ -706,18 +747,49 @@ function createShowerParticles(x, y, count, hueBase, isSpecialEvent = false) {
             vx: vx,
             vy: vy,
             size: Math.random() * (isSpecialEvent ? 6.5 : 4.2) + 2.8,
-            maxLife: Math.random() * (isSpecialEvent ? 55 : 45) + (isSpecialEvent ? 35 : 20),
+            maxLife: Math.random() * (isSpecialEvent ? 60 : 45) + (isSpecialEvent ? 35 : 20),
             life: 0,
             hue: particleHue,
-            // モバイル時は爆発・通常粒子ともに輝度を下げて目に優しく（クッキリ感は維持）
+            // 連鎖煙の視認性は確保しつつ、過剰な負荷は避ける
             alpha: isSpecialEvent
-                ? (IS_MOBILE ? 0.42 : 0.592)
-                : (IS_MOBILE ? 0.68 : 0.95),
+                ? (IS_MOBILE ? 0.58 : 0.68)
+                : (IS_MOBILE ? 0.72 : 0.95),
             type: pType,
             angle: Math.random() * Math.PI * 2,
             spin: isSpecialEvent ? (Math.random() - 0.5) * 0.12 : 0,
             gravity: isSpecialEvent ? 0.035 : 0.0,
             friction: isSpecialEvent ? 0.94 : 0.985
+        });
+    }
+}
+
+// 連鎖後の煙: 軽量（円スプライトのみ）かつ見えやすい専用パーティクル
+function createChainSmoke(x, y, count, hue) {
+    const maxParticles = IS_MOBILE ? 120 : 300;
+    if (showerParticles.length > maxParticles) {
+        showerParticles.splice(0, showerParticles.length - maxParticles);
+    }
+    const room = maxParticles - showerParticles.length;
+    if (room <= 0) return;
+    count = Math.min(count, room, IS_MOBILE ? 28 : 48);
+    for (let i = 0; i < count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 0.35 + Math.random() * 1.1;
+        showerParticles.push({
+            x: x + (Math.random() - 0.5) * 18,
+            y: y + (Math.random() - 0.5) * 18,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed - 0.35,
+            size: 3.5 + Math.random() * 5.5,
+            maxLife: 40 + Math.random() * 50,
+            life: 0,
+            hue: (hue + (Math.random() - 0.5) * 18 + 360) % 360,
+            alpha: IS_MOBILE ? 0.72 : 0.85,
+            type: 'circle',
+            angle: 0,
+            spin: 0,
+            gravity: -0.008,
+            friction: 0.97
         });
     }
 }
@@ -795,8 +867,8 @@ function updateShower() {
         }
 
         if (Math.random() < spawnChance) {
-            const rx = Math.random() * showerCanvas.width;
-            const ry = Math.random() * showerCanvas.height;
+            const rx = Math.random() * viewW;
+            const ry = Math.random() * viewH;
             
             // 通常時は水色系統(185〜210)、フィーバー中はオーロラと調和するエメラルドグリーン(135〜155)
             const autoHue = feverActive 
@@ -888,7 +960,6 @@ function initAuroraParticles() {
     }
 }
 
-// 粒子の描画 (オーロラカーテン用)
 function drawAuroraParticles(scale) {
     if (!auroraOffCtx || !showerCanvas) return;
     if (auroraParticles.length === 0) {
@@ -918,8 +989,8 @@ function drawAuroraParticles(scale) {
 
         p.phase += p.phaseSpeed;
 
-        const rx = p.xRatio * showerCanvas.width;
-        const waveInfo = getAuroraWave(rx, globalT, showerCanvas.width, showerCanvas.height);
+        const rx = p.xRatio * viewW;
+        const waveInfo = getAuroraWave(rx, globalT, viewW, viewH);
 
         // 粒子のY座標 (上に向かって透けながら上昇)
         const x = rx * scale;
@@ -928,7 +999,7 @@ function drawAuroraParticles(scale) {
         // 全体をもっと透けたグラデーションにするためのフェード計算
         const fade = Math.pow(1.0 - p.yRatio, 2.0); // 2乗にして上部ほどより早く、かつ滑らかに透明に溶け込ませる
         const twinkle = 0.4 + 0.6 * Math.sin(p.phase);
-        // モバイル時は霧状粒子の輝度も抑える（0.6595 → 0.46）
+        // モバイル時は霧状粒子の輝度も抑えるＨ0.6595 → 0.46）
         const auroraParticleAlphaMod = IS_MOBILE ? 0.46 : 0.6595;
         const finalAlpha = p.alpha * fade * twinkle * waveInfo.z * auroraParticleAlphaMod;
 
@@ -949,8 +1020,8 @@ function drawRealAuroraCurtain() {
     auroraTime += 0.0055;
 
     const scale = 0.25 / 1.2; // ぼかし量を1.2倍にするため、解像度スケールを調整 (約0.2083)
-    const offWidth = Math.ceil(showerCanvas.width * scale);
-    const offHeight = Math.ceil(showerCanvas.height * scale);
+    const offWidth = Math.ceil(viewW * scale);
+    const offHeight = Math.ceil(viewH * scale);
 
     // ── オフスクリーンCanvasの初期化（初回のみ） ──
     if (!auroraOffscreen || auroraOffscreen.width !== offWidth || auroraOffscreen.height !== offHeight) {
@@ -978,7 +1049,7 @@ function drawRealAuroraCurtain() {
 
         for (let ox = 0; ox < offWidth; ox += step) {
             const rx = ox / scale;
-            const waveInfo = getAuroraWave(rx, globalT, showerCanvas.width, showerCanvas.height);
+            const waveInfo = getAuroraWave(rx, globalT, viewW, viewH);
             const oyBase = waveInfo.yBase * scale;
             const ocurtainHeight = waveInfo.curtainHeight * scale;
             const oz = waveInfo.z;
@@ -988,9 +1059,10 @@ function drawRealAuroraCurtain() {
             const curtainRays = 0.70 + 0.30 * Math.abs(rayVal);
             // モバイル時はオーロラカーテンの輝度を抑えて眩しくない表示に（0.02052 → 0.014）
             const baseAuroraAlpha = IS_MOBILE ? 0.014 : 0.02052;
-            const a = baseAuroraAlpha * globalAlphaMod * curtainRays * oz;
+            const midAlpha = baseAuroraAlpha * globalAlphaMod * curtainRays;
 
             const grad = auroraOffCtx.createLinearGradient(ox, oyBase, ox, oyBase + ocurtainHeight);
+            const a = midAlpha * oz;
 
             // 画像の右上にある本物のオーロラのような、眩しいミントホワイトの発光コアを持つグラデーション
             grad.addColorStop(0.00, "rgba(  0,  20,  10, 0)"); // 最上部：透明
@@ -1022,7 +1094,7 @@ function drawRealAuroraCurtain() {
     // オーロラをジャイロの傾きと逆方向に少しずらす (パララックス効果)
     const auroraOffsetX = currentGyroX * -40;
     const auroraOffsetY = currentGyroY * -30;
-    showerCtx.drawImage(auroraOffscreen, auroraOffsetX, auroraOffsetY, showerCanvas.width, showerCanvas.height);
+    showerCtx.drawImage(auroraOffscreen, auroraOffsetX, auroraOffsetY, viewW, viewH);
     showerCtx.restore();
 }
 
@@ -1034,6 +1106,7 @@ function getThemeClearColor(ctx, width, height, alpha) {
             width / 2, height * 0.3, 0,
             width / 2, height * 0.3, Math.max(width, height)
         );
+        // alphaを1.0で生成し、後でglobalAlphaで調整する方式に変更
         if (currentTheme === 'aurora') {
             grad.addColorStop(0, 'rgb(6, 25, 23)');
             grad.addColorStop(0.6, 'rgb(3, 8, 11)');
@@ -1062,22 +1135,31 @@ function getThemeClearColor(ctx, width, height, alpha) {
 function drawShower() {
     if (!showerCtx || !showerCanvas) return;
     
-    // 繧ｳ繝ｳ繝應ｸuqなときは残像を強くして華やかに
     const now = performance.now();
     const activeCombo = (now - lastPopTime < COMBO_WINDOW) ? comboCount : 0;
-    const clearAlpha = Math.max(0.06, 0.12 - activeCombo * 0.006);
+    // 負荷時は残像を弱めて画面全体のぼやけを防ぐ（煙はパーティクル側で担保）
+    const highLoad = IS_MOBILE && (
+        _heavyFrameStreak > 2 ||
+        bubbles.length > 26 ||
+        showerParticles.length > 70
+    );
+    const clearAlpha = highLoad
+        ? Math.max(0.10, 0.16 - activeCombo * 0.003)
+        : (feverActive
+            ? Math.max(0.07, 0.11 - activeCombo * 0.003)
+            : Math.max(0.08, 0.13 - activeCombo * 0.005));
 
     // 残像のあるクリア（キャッシュされたグラデーションを使用）
     showerCtx.globalAlpha = clearAlpha;
-    showerCtx.fillStyle = getThemeClearColor(showerCtx, showerCanvas.width, showerCanvas.height, clearAlpha);
-    showerCtx.fillRect(0, 0, showerCanvas.width, showerCanvas.height);
+    showerCtx.fillStyle = getThemeClearColor(showerCtx, viewW, viewH, clearAlpha);
+    showerCtx.fillRect(0, 0, viewW, viewH);
     showerCtx.globalAlpha = 1.0;
     
     // 夜空のまたたく星屑を描画
     drawStars();
     
-    // フィーバー中はリアルな緑のオーロラカーテンを描画（ただし瞑想モード時は描画しない）
-    if (feverActive && !meditationMode) {
+    // フィーバー中のオーロラは負荷時スキップ（低解像度拡大が全体ぼやけの主因）
+    if (feverActive && !meditationMode && !highLoad) {
         drawRealAuroraCurtain();
     }
     
@@ -1085,6 +1167,10 @@ function drawShower() {
     showerCtx.globalCompositeOperation = 'screen';
     
     // 粒子の描画
+    // 負荷時は補間を抑えて輪郭のぼやけを減らす
+    const prevSmooth = showerCtx.imageSmoothingEnabled;
+    if (highLoad) showerCtx.imageSmoothingEnabled = false;
+
     showerParticles.forEach(p => {
         // 通常の円形（type指定がない、または 'circle'）
         if (!p.type || p.type === 'circle') {
@@ -1152,7 +1238,6 @@ function drawShower() {
     // グローバルアルファを元に戻す
     showerCtx.globalAlpha = 1.0;
     
-    // 波紋の描画
     showerRipples.forEach(r => {
         const hue = r.hue || 195;
         const color = `hsla(${hue}, 70%, 75%, ${r.alpha * 0.55})`;
@@ -1171,30 +1256,29 @@ function drawShower() {
         showerCtx.stroke();
     });
     
-    // 流星群の描画
     drawMeteors();
     
     showerCtx.restore();
     
-    // 泡は通常の描画で、粒子の奥に配置
     drawBubbles();
+    showerCtx.imageSmoothingEnabled = prevSmooth;
 }
 
 
 // =============================================================
-// 2.5 一時的な流星群システム
+// 流星群エフェクト
 // =============================================================
 
-// 流れ星の連動
 function triggerMeteorShower(originX, originY) {
     playMeteorSound(originX);
     
-    const count = 15;
-    const duration = 1000;
+    const count = 15; // 流れ星の総数
+    const duration = 1000; // 1.0秒間かけて順次放出 (より集中して飛び散るように短縮)
+    // 指定5色（シルバー: 210, 紫: 262, 青: 213, 緑: 148, 赤: 349）からシルバーを減らし、レッド・ブルーを増量した配色
     const colors = [210, 262, 262, 213, 213, 213, 148, 148, 349, 349, 349];
     
-    const x = (originX !== undefined) ? originX : (showerCanvas ? showerCanvas.width / 2 : 0);
-    const y = (originY !== undefined) ? originY : (showerCanvas ? showerCanvas.height / 2 : 0);
+    const x = (originX !== undefined) ? originX : (showerCanvas ? viewW / 2 : 0);
+    const y = (originY !== undefined) ? originY : (showerCanvas ? viewH / 2 : 0);
     
     for (let i = 0; i < count; i++) {
         const delayTime = (i / count) * duration + Math.random() * 50;
@@ -1233,71 +1317,83 @@ function createMeteor(hue, originX, originY) {
 
 function triggerMeteorBigExplosion(originX, originY) {
     triggerHaptic('explosion');
+    // 最初の爆発音
     playMeteorBigExplosionSound(originX);
+    // 炭酸バブルサウンドの再生
     playCarbonatedBubbleSound(originX);
     
-    const x = (originX !== undefined) ? originX : (showerCanvas ? showerCanvas.width / 2 : 0);
-    const y = (originY !== undefined) ? originY : (showerCanvas ? showerCanvas.height / 2 : 0);
+    const x = (originX !== undefined) ? originX : (showerCanvas ? viewW / 2 : 0);
+    const y = (originY !== undefined) ? originY : (showerCanvas ? viewH / 2 : 0);
     
+    // 1. メインの巨大大輪花火 (レッドとブルーを主体にし、シルバーを削減)
     createShowerParticles(x, y, 20, 210, true); // シルバー (40 -> 20に減量)
     createShowerParticles(x, y, 50, 349, true); // レッド (30 -> 50に大幅増量)
-    createShowerRipple(x, y, 270, 3.2, 349, 0.42);
-    launchExplosionMeteors(x, y, 50, 60);
+    createShowerRipple(x, y, 270, 3.2, 349, 0.42); // 特大波紋をシルバーからレッド(349)に変更 (発光量を0.42に微減)
+    launchExplosionMeteors(x, y, 50, 60); // 50本の流星
     
+    // 2. クライマックスの多重連鎖爆発 (時間差で色彩豊かな大輪が重なり合う)
+    
+    // 子爆発1: 0.12秒後 (左上にずれた青・紫の花火)
     setTimeout(() => {
         const cx = x - 130 + (Math.random() - 0.5) * 60;
         const cy = y - 90 + (Math.random() - 0.5) * 60;
-        playFeverStartSound(cx);
-        createShowerParticles(cx, cy, 20, 262, true);
-        createShowerParticles(cx, cy, 35, 213, true);
-        createShowerRipple(cx, cy, 180, 3.8, 213, 0.42);
+        playFeverStartSound(cx); // チャイムスイープ音
+        createShowerParticles(cx, cy, 20, 262, true); // 紫 (25 -> 20に減量)
+        createShowerParticles(cx, cy, 35, 213, true); // 青 (20 -> 35に増量)
+        createShowerRipple(cx, cy, 180, 3.8, 213, 0.42); // 波紋を青(213)に変更 (発光量を0.42に微減)
         launchExplosionMeteors(cx, cy, 25, 45);
     }, 120);
     
+    // 子爆発2: 0.26秒後 (右上にずれた青・緑の花火)
     setTimeout(() => {
         const cx = x + 140 + (Math.random() - 0.5) * 60;
         const cy = y - 80 + (Math.random() - 0.5) * 60;
         playFeverStartSound(cx);
-        createShowerParticles(cx, cy, 20, 148, true);
-        createShowerParticles(cx, cy, 35, 213, true);
-        createShowerRipple(cx, cy, 180, 3.8, 213, 0.42);
+        createShowerParticles(cx, cy, 20, 148, true); // 緑 (25 -> 20に減量)
+        createShowerParticles(cx, cy, 35, 213, true); // 青 (20 -> 35に増量)
+        createShowerRipple(cx, cy, 180, 3.8, 213, 0.42); // 波紋を青(213)に変更 (発光量を0.42に微減)
         launchExplosionMeteors(cx, cy, 25, 45);
     }, 260);
     
+    // 子爆発3: 0.40秒後 (少し下にずれた赤・紫の花火)
     setTimeout(() => {
         const cx = x - 40 + (Math.random() - 0.5) * 60;
         const cy = y + 100 + (Math.random() - 0.5) * 50;
         playFeverStartSound(cx);
-        createShowerParticles(cx, cy, 35, 349, true);
-        createShowerParticles(cx, cy, 20, 262, true);
-        createShowerRipple(cx, cy, 190, 4.0, 349, 0.42);
+        createShowerParticles(cx, cy, 35, 349, true); // 赤 (25 -> 35に増量)
+        createShowerParticles(cx, cy, 20, 262, true); // 紫 (20枚維持)
+        createShowerRipple(cx, cy, 190, 4.0, 349, 0.42); // 波紋は赤(349) (発光量を0.42に微減)
         launchExplosionMeteors(cx, cy, 25, 45);
     }, 400);
     
+    // 子爆発4: 0.52秒後 (右下にずれた青・シルバーの花火)
     setTimeout(() => {
         const cx = x + 110 + (Math.random() - 0.5) * 60;
         const cy = y + 80 + (Math.random() - 0.5) * 50;
         playFeverStartSound(cx);
-        createShowerParticles(cx, cy, 10, 210, true);
-        createShowerParticles(cx, cy, 20, 213, true);
-        createShowerParticles(cx, cy, 15, 148, true);
-        createShowerRipple(cx, cy, 160, 4.0, 213, 0.42);
+        createShowerParticles(cx, cy, 10, 210, true); // シルバー (25 -> 10に大幅減量)
+        createShowerParticles(cx, cy, 20, 213, true); // 青 (20本追加)
+        createShowerParticles(cx, cy, 15, 148, true); // 緑 (20 -> 15に減量)
+        createShowerRipple(cx, cy, 160, 4.0, 213, 0.42); // 波紋を青(213)に変更 (発光量を0.42に微減)
         launchExplosionMeteors(cx, cy, 20, 40);
     }, 520);
     
+    // 最終フィナーレ特大花火: 0.68秒後 (中央上空のマルチカラー錦冠花火 ＋ 再度の大爆発音！)
     setTimeout(() => {
         const cx = x + (Math.random() - 0.5) * 40;
         const cy = y - 120 + (Math.random() - 0.5) * 40;
-        playMeteorBigExplosionSound(cx);
-        createShowerParticles(cx, cy, 100, 'multi', true);
-        createShowerRipple(cx, cy, 310, 4.5, 213, 0.42);
-        createShowerRipple(cx, cy, 225, 5.2, 262, 0.42);
-        createShowerRipple(cx, cy, 170, 6.0, 210, 0.42);
-        launchExplosionMeteors(cx, cy, 50, 70);
+        playMeteorBigExplosionSound(cx); // 2回目の大爆発音でクライマックスの轟音を再現！
+        createShowerParticles(cx, cy, 100, 'multi', true); // 豪華マルチカラー星屑 (重み付け適用で赤・青増量)
+        createShowerRipple(cx, cy, 310, 4.5, 213, 0.42); // 特大の波紋をシルバーからブルー(213)に変更してシルバーの支配度を低下 (発光量を0.42に微減)
+        createShowerRipple(cx, cy, 225, 5.2, 262, 0.42); // 中サイズ波紋: 紫 (発光量を0.42に微減)
+        createShowerRipple(cx, cy, 170, 6.0, 210, 0.42); // 小サイズ波紋をシルバー(210)に設定 (発光量を0.42に微減)
+        launchExplosionMeteors(cx, cy, 50, 70); // 最後の錦冠の火花
     }, 680);
 }
 
+// 爆発点から流星群を放出するヘルパー関数
 function launchExplosionMeteors(cx, cy, count, duration) {
+    // 指定5色（シルバー: 210, 紫: 262, 青: 213, 緑: 148, 赤: 349）からシルバーを減らし、レッド・ブルーを増量した配色
     const colors = [210, 262, 262, 213, 213, 213, 148, 148, 349, 349, 349];
     for (let i = 0; i < count; i++) {
         const delayTime = (i / count) * duration + Math.random() * 4;
@@ -1328,6 +1424,7 @@ function createBigExplosionMeteor(hue, originX, originY) {
         hue: hue,
         alpha: 0,
         fadeSpeed: 0.45,
+        // モバイル時は大爆発流星の最大輝度を抑えて眩しくしない（0.623 → 0.44）
         targetAlpha: (0.9 + Math.random() * 0.1) * (IS_MOBILE ? 0.44 : 0.623),
         sparkleChance: 0.8,
         life: 0,
@@ -1335,22 +1432,27 @@ function createBigExplosionMeteor(hue, originX, originY) {
     });
 }
 
+// バックグラウンドで流れる自然な流れ星の生成（60秒に1回）
 function spawnBackgroundShootingStar() {
     if (!showerCanvas) return;
     
+    // 画面左上〜中央上部から発生し、右下方向へ流れる
     const startFromLeft = Math.random() < 0.5;
     let startX, startY;
     
     if (startFromLeft) {
+        // 左端からスタート（上半分）
         startX = -100;
-        startY = Math.random() * showerCanvas.height * 0.45;
+        startY = Math.random() * viewH * 0.45;
     } else {
-        startX = Math.random() * showerCanvas.width * 0.55;
+        // 上端からスタート（左半分）
+        startX = Math.random() * viewW * 0.55;
         startY = -100;
     }
     
+    // 右下への角度（約 20度 〜 45度）
     const angle = (18 + Math.random() * 22) * Math.PI / 180;
-    const speed = 14 + Math.random() * 6;
+    const speed = 14 + Math.random() * 6; // 14〜20px/フレーム（自然な高速感と視認性を両立）
     
     meteors.push({
         x: startX,
@@ -1359,30 +1461,34 @@ function spawnBackgroundShootingStar() {
         vy: Math.sin(angle) * speed,
         speed: speed,
         angle: angle,
-        length: 120 + Math.random() * 80,
-        width: 1.0 + Math.random() * 0.8,
+        length: 120 + Math.random() * 80, // 目で追いやすいように尾の長さを少し延長（120〜200px）
+        width: 1.0 + Math.random() * 0.8,  // 線が細すぎて消えないよう少し太さを調整（1.0〜1.8px）
         hue: 0, 
         alpha: 0,
         fadeSpeed: 0.18, 
-        targetAlpha: 0.52 + Math.random() * 0.22,
+        targetAlpha: 0.52 + Math.random() * 0.22, // 視認できるよう不透明度を50%〜74%程度に引き上げ
         sparkleChance: 0, 
-        maxLife: 20 + Math.random() * 15,
+        maxLife: 20 + Math.random() * 15, // 画面内を心地よく流れる適度な寿命（20〜35フレーム：約0.33〜0.6秒）
         life: 0,
         isBackground: true
     });
 }
 
 function updateMeteors() {
+    // ランダムな間隔（平均25秒周期：10秒〜40秒の間）で自然な流れ星を流す
     const now = Date.now();
     if (now - lastShootingStarTime >= nextShootingStarDelay) {
         spawnBackgroundShootingStar();
         lastShootingStarTime = now;
+        // 次回のディレイを10秒〜40秒 of ランダムな範囲（平均25秒：50秒に約2回ペース）に再設定
         let delay = 10000 + Math.random() * 30000;
         if (meditationMode) {
-            delay /= 1.2;
+            delay /= 1.2; // 瞑想モード時はディレイを短縮して流れ星20%増しにする
         }
         nextShootingStarDelay = delay;
     }
+
+    // 既存 of 流星はゲーム終了後も画面外に消えるまで更新を続ける
     
     for (let i = meteors.length - 1; i >= 0; i--) {
         const m = meteors[i];
@@ -1408,21 +1514,22 @@ function updateMeteors() {
             }
         }
         
+        // 軌道上にきらめき粒子を発生
         if (Math.random() < m.sparkleChance) {
             createShowerParticles(
                 m.x - m.vx * 0.2,
                 m.y - m.vy * 0.2,
                 1,
                 m.hue,
-                m.maxLife !== undefined
+                m.maxLife !== undefined // 大爆発流星の時はisSpecialEventをtrueにして発光量0.9xを適用
             );
         }
         
         if (showerCanvas && (
             m.x < -m.length || 
-            m.x > showerCanvas.width + m.length || 
+            m.x > viewW + m.length || 
             m.y < -m.length || 
-            m.y > showerCanvas.height + m.length
+            m.y > viewH + m.length
         )) {
             meteors.splice(i, 1);
         }
@@ -1439,11 +1546,13 @@ function drawMeteors() {
         let grad, glowGrad;
         
         if (m.isBackground) {
+            // 自然な流れ星のグラデーション（ほぼ純白〜微かに淡い青白にフェード）
             grad = showerCtx.createLinearGradient(m.x, m.y, tailX, tailY);
             grad.addColorStop(0, `rgba(255, 255, 255, ${m.alpha})`);
-            grad.addColorStop(0.3, `rgba(242, 246, 255, ${m.alpha * 0.85})`);
+            grad.addColorStop(0.3, `rgba(242, 246, 255, ${m.alpha * 0.85})`); // 透明度を少し引き上げ
             grad.addColorStop(1, `rgba(255, 255, 255, 0)`);
             
+            // 周囲のグロー（光背）も視認できるように少し強調
             glowGrad = showerCtx.createLinearGradient(m.x, m.y, tailX, tailY);
             glowGrad.addColorStop(0, `rgba(255, 255, 255, ${m.alpha * 0.22})`);
             glowGrad.addColorStop(0.5, `rgba(240, 245, 255, 0)`);
@@ -1464,6 +1573,7 @@ function drawMeteors() {
         showerCtx.save();
         showerCtx.lineCap = 'round';
         
+        // グロー線
         showerCtx.strokeStyle = glowGrad;
         showerCtx.lineWidth = m.isBackground ? m.width * 1.5 : m.width * 2.5;
         showerCtx.beginPath();
@@ -1471,6 +1581,7 @@ function drawMeteors() {
         showerCtx.lineTo(tailX, tailY);
         showerCtx.stroke();
         
+        // 実線
         showerCtx.strokeStyle = grad;
         showerCtx.lineWidth = m.width;
         showerCtx.beginPath();
@@ -1486,67 +1597,154 @@ function drawMeteors() {
 // 3. 泡のシステム
 // =============================================================
 
-function initAudio() {
+// iOS: resume完了前に startAmbientSound が呼ばれると無音のまま残ることがある
+let pendingAmbientStart = false;
+let audioResumePromise = null;
+
+// Audio が running になったときにアンビエントを確実に開始する
+function ensureAmbientAfterUnlock() {
+    if (!gameActive || !audioCtx || audioCtx.state !== 'running') return;
+    pendingAmbientStart = false;
+    if (ambientOscs.length === 0) {
+        startAmbientSound();
+    }
+}
+
+// AudioContextの初期化（ユーザー操作時に都度呼び出し）
+// options.resume === false のときは Context 生成のみ（ページロード時など、ジェスチャ外での resume を避ける）
+function initAudio(options) {
+    const allowResume = !options || options.resume !== false;
     try {
+        // すでに再生中なら重い解除処理を繰り返さない（毎タップの Audio 生成で iOS が固まる対策）
+        if (audioCtx && audioCtx.state === 'running') {
+            scheduleCarbonatedPregen();
+            if (gameActive || pendingAmbientStart) {
+                ensureAmbientAfterUnlock();
+            }
+            return Promise.resolve();
+        }
+
+        // ★Chrome (iOS) 対策: ユーザージェスチャ直下で HTML5 Audio を同期再生しスピーカーを開放
+        if (allowResume) {
+            try {
+                const audio = new Audio();
+                audio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAARKwAARKwAAAEAAgAZAAAATUFOWQAAAAADAAgAZGF0YQgAAAAAAAAA';
+                audio.volume = 0.0001;
+                audio.play().catch(() => {});
+            } catch (_) {}
+        }
+
         const AudioContextClass = window.AudioContext || window.webkitAudioContext;
         if (audioCtx && audioCtx.state === 'closed') {
             audioCtx = null;
             carbonatedBufferCache = null;
+            audioResumePromise = null;
         }
         if (!audioCtx && AudioContextClass) {
             audioCtx = new AudioContextClass();
+            carbonatedBufferCache = null;
+            audioResumePromise = null;
         }
-        
+
         if (audioCtx) {
-            if (audioCtx.state !== 'running') {
-                audioCtx.resume().then(() => {
-                    pregenerateCarbonatedBuffer();
-                }).catch((err) => {
-                    console.warn("AudioContextのresumeに失敗しました:", err);
-                });
-            } else {
-                pregenerateCarbonatedBuffer();
-            }
-            
             if (!audioCtx._stateChangeListenerAdded) {
                 audioCtx._stateChangeListenerAdded = true;
                 audioCtx.onstatechange = () => {
-                    if (audioCtx.state === 'running') {
-                        pregenerateCarbonatedBuffer();
-                        if (gameActive) {
-                            startAmbientSound();
+                    if (audioCtx && audioCtx.state === 'running') {
+                        scheduleCarbonatedPregen();
+                        if (gameActive || pendingAmbientStart) {
+                            // stop+start の連打は固まりの原因。未開始時のみ開始する
+                            ensureAmbientAfterUnlock();
                         }
                     }
                 };
             }
-            
+
+            if (audioCtx.state === 'running') {
+                scheduleCarbonatedPregen();
+                if (gameActive || pendingAmbientStart) {
+                    ensureAmbientAfterUnlock();
+                }
+                return audioResumePromise || Promise.resolve();
+            }
+
+            // ジェスチャ外では resume しない（iOS で以後の解除が不安定になることがある）
+            if (!allowResume) {
+                if (gameActive) pendingAmbientStart = true;
+                return Promise.resolve();
+            }
+
+            // ロック解除用の無音バッファ（ユーザージェスチャ同期スタック内）
             try {
                 const buffer = audioCtx.createBuffer(1, 1, 22050);
                 const source = audioCtx.createBufferSource();
                 source.buffer = buffer;
                 source.connect(audioCtx.destination);
                 source.start(0);
-            } catch (err) {
-                console.warn("ダミー音声再生に失敗しました:", err);
+            } catch (_) {}
+
+            if (gameActive) pendingAmbientStart = true;
+
+            if (!audioResumePromise) {
+                audioResumePromise = audioCtx.resume()
+                    .then(() => {
+                        audioResumePromise = null;
+                        scheduleCarbonatedPregen();
+                        if (gameActive || pendingAmbientStart) {
+                            ensureAmbientAfterUnlock();
+                        }
+                    })
+                    .catch((err) => {
+                        audioResumePromise = null;
+                        console.warn("AudioContextのresumeに失敗しました:", err);
+                    });
+            } else {
+                // 進行中の resume 完了後も、今回の開始要求を拾わせる
+                audioResumePromise.then(() => {
+                    if (gameActive || pendingAmbientStart) {
+                        ensureAmbientAfterUnlock();
+                    }
+                }).catch(() => {});
             }
+
+            return audioResumePromise || Promise.resolve();
         }
     } catch (e) {
         console.warn("Web Audio APIの初期化に失敗しました。無音で動作します:", e);
     }
+    return Promise.resolve();
 }
 
+// 炭酸バッファ生成は重いので、タップ判定のあとへずらす（iOSの初回タップ取りこぼし防止）
+function scheduleCarbonatedPregen() {
+    if (carbonatedBufferCache || !audioCtx) return;
+    const run = () => {
+        try {
+            pregenerateCarbonatedBuffer();
+        } catch (_) {}
+    };
+    if (typeof requestIdleCallback === 'function') {
+        requestIdleCallback(run, { timeout: 900 });
+    } else {
+        setTimeout(run, 0);
+    }
+}
+
+// 泡を一つ生成する
 function createBubble(forceType) {
-    let limit = feverActive ? 60 : MAX_BUBBLES;
+    let limit = feverActive ? FEVER_MAX_BUBBLES : MAX_BUBBLES;
     if (meditationMode) {
         limit = Math.floor(limit / 2);
     }
     if (!showerCanvas || bubbles.length >= limit) return;
     
     const colorInfo = BUBBLE_COLORS[Math.floor(Math.random() * BUBBLE_COLORS.length)];
+    // スマホ（幅600px以下）では画面幅比でサイズをスケールダウン
     const isMobile = window.innerWidth <= 600;
+    // スマホ時は0.72倍
     const mobileScale = 0.72;
     const sizeScale = isMobile ? Math.min(1, window.innerWidth / 600) * mobileScale : 1;
-    let radius = (22 + Math.random() * 22) * sizeScale;
+    let radius = (22 + Math.random() * 22) * sizeScale; // スマホ: 約16〜32px
     
     let type = 'normal';
     if (forceType) {
@@ -1555,33 +1753,37 @@ function createBubble(forceType) {
             radius *= 1.25;
         }
     } else {
+        // フィーバー中でなければ、低確率で銀色の泡が発生。フィーバー中は25%の確率で連鎖バブルが発生
         if (meditationMode) {
+            // 瞑想モード時は20個に1個（5%）の確率で銀色（白い球）が発生
             if (Math.random() < 0.05) {
                 type = 'silver';
                 radius *= 1.25;
             }
         } else {
             if (!feverActive) {
-                if (Math.random() < 0.03) {
+                if (Math.random() < 0.03) { // 3%の確率
                     type = 'silver';
-                    radius *= 1.25;
+                    radius *= 1.25; // 銀色の泡は少し大きく
                 }
             } else {
+                // 画面上にすでに連鎖バブルが存在するかチェック（破裂中や予約中のものも含め、画面上に1つだけに制限する）
                 const hasChain = bubbles.some(b => b.type === 'chain');
-                if (!hasChain && Math.random() < 0.35) {
+                if (!hasChain && Math.random() < 0.35) { // 35%の確率で連鎖バブルが発生
                     type = 'chain';
-                    radius *= 1.15;
+                    radius *= 1.15; // 連鎖バブルは少し大きく
                 }
             }
         }
     }
     
+    // 浮遊速度の決定
     let vy = type === 'silver' ? -(0.25 + Math.random() * 0.35) : -(0.3 + Math.random() * 0.5);
     
     bubbles.push({
         type: type,
-        x: radius + Math.random() * (showerCanvas.width - radius * 2),
-        y: showerCanvas.height + radius + Math.random() * 40,
+        x: radius + Math.random() * (viewW - radius * 2),
+        y: viewH + radius + Math.random() * 40,
         radius: radius,
         color: type === 'silver' ? '#e2e8f0' : (type === 'chain' ? '#e8d5db' : colorInfo.hex),
         hue: type === 'silver' ? 210 : (type === 'chain' ? 345 : colorInfo.hue),
@@ -1593,12 +1795,13 @@ function createBubble(forceType) {
         pushX: 0,
         pushY: 0,
         wobble: 0,
-        wobbleTime: Math.random() * Math.PI * 2,
+        wobbleTime: Math.random() * Math.PI * 2, // 振動位相をバラつかせる
         popScaleX: 1,
         popScaleY: 1,
         time: 0,
         popping: false,
-        reserved: false,
+        reserved: false, // ドミノ連鎖予約フラグ
+        reservedAt: 0,
         popFrame: 0,
         popMaxFrames: 18,
         popScale: 1,
@@ -1607,12 +1810,15 @@ function createBubble(forceType) {
 }
 
 function updateBubbles(timestamp) {
+    // 新しい泡のスポーン（ゲームが進行中のみ）
     if (gameActive) {
+        // フィーバー終了チェック
         if (feverActive && performance.now() > feverEndTime) {
             feverActive = false;
         }
         
-        let limit = feverActive ? 60 : MAX_BUBBLES;
+        let limit = feverActive ? FEVER_MAX_BUBBLES : MAX_BUBBLES;
+        // オーロラ（フィーバータイム）が出ている間は球の発生率を4倍にする（間隔を1/4に）
         let spawnMin = feverActive ? Math.floor(BUBBLE_SPAWN_MIN / 4) : BUBBLE_SPAWN_MIN;
         let spawnMax = feverActive ? Math.floor(BUBBLE_SPAWN_MAX / 4) : BUBBLE_SPAWN_MAX;
         
@@ -1628,25 +1834,37 @@ function updateBubbles(timestamp) {
         }
     }
     
+    // 各泡の更新
     for (let i = bubbles.length - 1; i >= 0; i--) {
         const b = bubbles[i];
+
+        // 連鎖予約のまま残った泡を復帰（無反応タップの原因）
+        if (b.reserved && !b.popping && b.reservedAt && (performance.now() - b.reservedAt > 4000)) {
+            b.reserved = false;
+            b.reservedAt = 0;
+        }
         
         if (b.popping) {
+            // ポップアニメーション
             b.popFrame++;
             const progress = b.popFrame / b.popMaxFrames;
             
+            // アスペクト比を弾性イージングで変形させる「ぷにゅん」破裂
             if (progress < 0.3) {
+                // タップ直後の30%の時間で、一瞬「横に潰れて膨らむ」（ぷにゅっ）
                 const factor = Math.sin((progress / 0.3) * Math.PI);
                 b.popScaleX = 1 + factor * 0.35;
                 b.popScaleY = 1 - factor * 0.22;
             } else {
+                // 後半の70%の時間で、「縦にビヨーンと伸びながら消滅する」
                 const t = (progress - 0.3) / 0.7;
                 b.popScaleX = 1.35 * (1 - t);
                 b.popScaleY = 1.48 * (1 - t);
             }
             
-            b.popScale = b.popScaleX;
+            b.popScale = b.popScaleX; // 後方互換性維持
             
+            // ピーク時に波紋と粒子を発生（瞑想モード時は刺激を避けるため発生させない）
             if (!b.popTriggered && progress >= 0.3) {
                 b.popTriggered = true;
                 
@@ -1660,27 +1878,32 @@ function updateBubbles(timestamp) {
                 }
             }
             
+            // アニメーション完了で削除
             if (b.popFrame >= b.popMaxFrames) {
                 bubbles.splice(i, 1);
                 continue;
             }
         } else {
+            // 通常の浮遊更新
             b.time++;
             const speedMultiplier = feverActive ? 1.8 : 1.0;
             
+            // 元のゆらゆら移動成分
             const baseDy = b.vy * speedMultiplier;
             const baseDx = Math.sin(b.time * b.swaySpeed * speedMultiplier + b.swayOffset) * b.swayAmplitude * speedMultiplier;
             
             b.y += baseDy;
             b.x += baseDx;
             
+            // 画面端で折り返し（元の端での固定処理に復元）
             if (b.x - b.radius < 0) {
                 b.x = b.radius;
             }
-            if (showerCanvas && b.x + b.radius > showerCanvas.width) {
-                b.x = showerCanvas.width - b.radius;
+            if (showerCanvas && b.x + b.radius > viewW) {
+                b.x = viewW - b.radius;
             }
             
+            // 画面の上に抜けたら削除
             if (b.y + b.radius < -30) {
                 bubbles.splice(i, 1);
             }
@@ -1698,6 +1921,7 @@ function drawBubbles() {
         let scaleX = 1;
         let scaleY = 1;
         
+        // ポップ時のみアスペクト比スケールをかける（浮遊時は完全な円）
         if (b.popping) {
             scaleX = b.popScaleX || 1;
             scaleY = b.popScaleY || 1;
@@ -1705,24 +1929,29 @@ function drawBubbles() {
 
         showerCtx.save();
         
+        // ジャイロによる視差効果（手前のバブルほど大きく動くパララックス）
         const bOffsetX = currentGyroX * 0.4 * b.radius;
         const bOffsetY = currentGyroY * 0.4 * b.radius;
         
+        // 座標系をバブルの中心に移動させ、アスペクト比スケールをかける
         showerCtx.translate(b.x + bOffsetX, b.y + bOffsetY);
         showerCtx.scale(scaleX, scaleY);
         
+        // ポップ中はフェードアウト
         const alphaMultiplier = b.popping ? Math.max(0, 1 - (b.popFrame / b.popMaxFrames)) : 1;
         showerCtx.globalAlpha = b.alpha * alphaMultiplier;
         
         if (b.type === 'silver' || b.type === 'normal') {
             const template = getBubbleTemplate(b.type, b.hue, b.color);
-            const size = 128 * (drawRadius / 30);
+            const size = 256 * (drawRadius / 60);
             showerCtx.drawImage(template, -size / 2, -size / 2, size, size);
         } else if (b.type === 'chain') {
+            // 連鎖バブルは事前キャッシュされたシルバーテンプレートを流用して軽量描画
             const template = getBubbleTemplate('silver', 210, '#cbd5e1');
-            const size = 128 * (drawRadius / 30);
+            const size = 256 * (drawRadius / 60);
             showerCtx.drawImage(template, -size / 2, -size / 2, size, size);
             
+            // 回転リングのみ追加描画（グラデーション生成なし）
             showerCtx.save();
             showerCtx.rotate(b.time * 0.025);
             showerCtx.strokeStyle = 'rgba(226, 232, 240, 0.5)';
@@ -1738,6 +1967,8 @@ function drawBubbles() {
     });
 }
 
+
+
 const THEME_BUBBLE_COLORS = {
     ocean: [
         { hex: '#81c3d7', hue: 195 },
@@ -1748,28 +1979,28 @@ const THEME_BUBBLE_COLORS = {
         { hex: '#8da9c4', hue: 213 }
     ],
     aurora: [
-        { hex: '#38d064', hue: 140 },
-        { hex: '#96e6b3', hue: 148 },
-        { hex: '#38b06a', hue: 150 },
-        { hex: '#81c3d7', hue: 195 },
-        { hex: '#c2aff0', hue: 262 },
-        { hex: '#a7f3d0', hue: 152 }
+        { hex: '#38d064', hue: 140 }, // Mint emerald
+        { hex: '#96e6b3', hue: 148 }, // Pale green
+        { hex: '#38b06a', hue: 150 }, // Deep mint
+        { hex: '#81c3d7', hue: 195 }, // Cyan
+        { hex: '#c2aff0', hue: 262 }, // Violet
+        { hex: '#a7f3d0', hue: 152 }  // Glow emerald
     ],
     starry: [
-        { hex: '#ffd700', hue: 45 },
-        { hex: '#f8fafc', hue: 210 },
-        { hex: '#a5f3fc', hue: 187 },
-        { hex: '#ffcc80', hue: 35 },
-        { hex: '#c2aff0', hue: 262 },
-        { hex: '#cbd5e1', hue: 215 }
+        { hex: '#ffd700', hue: 45 },  // Gold
+        { hex: '#f8fafc', hue: 210 }, // Diamond White
+        { hex: '#a5f3fc', hue: 187 }, // Ice Blue
+        { hex: '#ffcc80', hue: 35 },  // Pale Amber
+        { hex: '#c2aff0', hue: 262 }, // Starry Violet
+        { hex: '#cbd5e1', hue: 215 }  // Soft Silver
     ],
     sakura: [
-        { hex: '#fbcfe8', hue: 330 },
-        { hex: '#f472b6', hue: 330 },
-        { hex: '#fecdd3', hue: 350 },
-        { hex: '#fda4af', hue: 353 },
-        { hex: '#ffffff', hue: 0 },
-        { hex: '#e8d5db', hue: 340 }
+        { hex: '#fbcfe8', hue: 330 }, // Sakura pink
+        { hex: '#f472b6', hue: 330 }, // Rose pink
+        { hex: '#fecdd3', hue: 350 }, // Peach
+        { hex: '#fda4af', hue: 353 }, // Deep peach
+        { hex: '#ffffff', hue: 0 },   // Pure white
+        { hex: '#e8d5db', hue: 340 }  // Warm grey
     ]
 };
 
@@ -1777,14 +2008,17 @@ function applyTheme(themeName) {
     if (!THEME_BUBBLE_COLORS[themeName]) return;
     currentTheme = themeName;
     
+    // Body class
     document.body.classList.remove('theme-aurora', 'theme-starry', 'theme-sakura');
     if (themeName !== 'ocean') {
         document.body.classList.add(`theme-${themeName}`);
     }
     
+    // Modify bubble colors in-place
     BUBBLE_COLORS.length = 0;
     THEME_BUBBLE_COLORS[themeName].forEach(color => BUBBLE_COLORS.push(color));
     
+    // Base Hues
     if (themeName === 'ocean') {
         showerHue = 200;
     } else if (themeName === 'aurora') {
@@ -1795,19 +2029,23 @@ function applyTheme(themeName) {
         showerHue = 340;
     }
     
+    // Clear caches
     for (let key in bubbleTemplateCache) {
         delete bubbleTemplateCache[key];
     }
     for (let key in particleSpriteCache) {
         delete particleSpriteCache[key];
     }
+    // 背景グラデーションキャッシュもリセット
     _bgGradientCache = null;
     
+    // Re-init templates and particles
     initBubbleTemplates();
     initParticleSprites();
     initStars();
     initAuroraParticles();
     
+    // UI class active
     const themeButtons = document.querySelectorAll('#theme-options .btn-option');
     themeButtons.forEach(btn => {
         if (btn.getAttribute('data-theme') === themeName) {
@@ -1819,7 +2057,6 @@ function applyTheme(themeName) {
 }
 
 function setNightMode(enabled) {
-    nightModeEnabled = enabled;
     const chkNightMode = document.getElementById('chk-night-mode');
     if (chkNightMode) {
         chkNightMode.checked = enabled;
@@ -1831,9 +2068,14 @@ function setNightMode(enabled) {
     }
 }
 
+// ──────────────────────────────────────────────
+// 言語モード切り替え
+// mode: 'bilingual' | 'ja' | 'en'
+// ──────────────────────────────────────────────
 function applyLangMode(mode) {
     langMode = mode;
 
+    // body クラスを切り替え
     document.body.classList.remove('lang-ja', 'lang-en', 'lang-bilingual');
     if (mode === 'ja') {
         document.body.classList.add('lang-ja');
@@ -1843,6 +2085,7 @@ function applyLangMode(mode) {
         document.body.classList.add('lang-bilingual');
     }
 
+    // 設定ボタンのアクティブ状態を更新
     const langBtns = document.querySelectorAll('#lang-options .btn-option');
     langBtns.forEach(btn => {
         if (btn.getAttribute('data-lang') === mode) {
@@ -1852,7 +2095,12 @@ function applyLangMode(mode) {
         }
     });
 
+    // ────────────────────────────────────────────
+    // 英語モード専用: テキストが日英混在している
+    // 要素を書き換える（CSSで隠せない箇所）
+    // ────────────────────────────────────────────
     const langTexts = {
+        // [selector, bilingual, ja, en]
         '#btn-quit-active':     ['終了する / Quit', '終了する', 'Quit'],
         '#btn-sound-guide-open': ['🔊 音が鳴らないときは / If there is no sound', '🔊 音が鳴らないときは', '🔊 If there is no sound'],
     };
@@ -1866,6 +2114,7 @@ function applyLangMode(mode) {
         else                       el.textContent = texts[2];
     });
 
+    // スタート画面のモードカードの説明テキスト (btn-mode-detail)
     const modeDetails = {
         'btn-play-normal': {
             bilingual: '泡を80個つぶしてゴール ／ 約3〜5分',
@@ -1891,6 +2140,7 @@ function applyLangMode(mode) {
         if (detail) detail.textContent = texts[mode] || texts['bilingual'];
     });
 
+    // スタート画面バッジテキスト
     const badgeNormal = document.querySelector('#mode-card-normal .mode-badge');
     if (badgeNormal) {
         if (mode === 'en') badgeNormal.textContent = '✦ Recommended for beginners';
@@ -1902,6 +2152,7 @@ function applyLangMode(mode) {
         else               badgeMeditation.textContent = '✦ 脳疲労の強い方におすすめ';
     }
 
+    // how-to-guide の説明テキスト
     const howToDescs = document.querySelectorAll('.how-to-desc');
     const howToDescTexts = [
         { bilingual: '揺れる泡を\nゆっくり眺める', ja: '揺れる泡を\nゆっくり眺める', en: 'Watch the swaying\nbubbles slowly' },
@@ -1914,12 +2165,14 @@ function applyLangMode(mode) {
         }
     });
 
+    // 呼吸ガイドテキストを即時反映（breathStateを強制リセットして再描画を促す）
     breathState = '';
     
     if (window.updateBreathPatternUI) {
         window.updateBreathPatternUI();
     }
 
+    // ガイドテキスト（ゲーム開始前）の初期表示切り替え
     const guide = document.getElementById('guide-text');
     if (guide && !gameActive) {
         if (mode === 'en') {
@@ -1934,20 +2187,22 @@ function applyLangMode(mode) {
 
 
 function initApp() {
-    // 古いlocalStorageのカウント情報をクリーンアップ（テスト・初回移行対策）
-    localStorage.removeItem('brain_reflexo_trial_play_count');
-
+    // 初回起動時はゲームを開始せずスタート画面を表示する
     initShower();
     applyTheme('starry');
+    
+    // ナイトモードの初期化 (デフォルトはオフ)
     setNightMode(false);
-    applyLangMode('bilingual');
-
+    
     const chkNightMode = document.getElementById('chk-night-mode');
     if (chkNightMode) {
         chkNightMode.addEventListener('change', (e) => {
             setNightMode(e.target.checked);
         });
     }
+
+    // 言語モードの初期化 (デフォルトはBilingual)
+    applyLangMode('bilingual');
 
     const langButtons = document.querySelectorAll('#lang-options .btn-option');
     langButtons.forEach(btn => {
@@ -1962,6 +2217,7 @@ function initApp() {
         }, { passive: false });
     });
     
+    // 設定関連UIの初期化
     const btnSettings = document.getElementById('btn-settings');
     const settingsPanel = document.getElementById('settings-panel');
     const btnSettingsClose = document.getElementById('btn-settings-close');
@@ -1977,6 +2233,7 @@ function initApp() {
         });
     }
 
+    // 設定パネルのスワイプ閉じ対応（右スワイプで閉じる）
     if (settingsPanel) {
         let touchStartX = 0;
         let touchStartY = 0;
@@ -1985,6 +2242,7 @@ function initApp() {
         let ignoreSwipe = false;
 
         settingsPanel.addEventListener('touchstart', (e) => {
+            // 音量スライダーなどの操作時はスワイプ判定を無視する
             if (e.target.closest('input[type="range"]')) {
                 ignoreSwipe = true;
                 return;
@@ -1997,6 +2255,7 @@ function initApp() {
             touchCurrentX = touchStartX;
             isSwiping = false;
             
+            // ドラッグ中の追従を滑らかにするため一時的にトランジションを無効化
             settingsPanel.style.transition = 'none';
         }, { passive: true });
 
@@ -2008,13 +2267,17 @@ function initApp() {
             const diffX = touchCurrentX - touchStartX;
             const diffY = touch.clientY - touchStartY;
             
+            // 右スワイプ方向であり、横の動きが縦スクロールより強い場合のみスワイプと判定
             if (!isSwiping && diffX > 10 && Math.abs(diffX) > Math.abs(diffY)) {
                 isSwiping = true;
             }
             
             if (isSwiping) {
+                // スワイプ量に合わせてパネルを右にずらす（左方向へのドラッグは防ぐ）
                 const translateVal = Math.max(0, diffX);
                 settingsPanel.style.transform = `translateX(${translateVal}px)`;
+                
+                // スワイプ中は背景やパネル自身のスクロール等のデフォルト挙動を防止
                 if (e.cancelable) {
                     e.preventDefault();
                 }
@@ -2023,12 +2286,18 @@ function initApp() {
 
         settingsPanel.addEventListener('touchend', () => {
             if (ignoreSwipe) return;
+            
+            // トランジションを元に戻す
             settingsPanel.style.transition = '';
             
             const diffX = touchCurrentX - touchStartX;
+            
+            // 100px以上右へスワイプされていたら閉じる
             if (isSwiping && diffX > 100) {
                 settingsPanel.classList.remove('active');
             }
+            
+            // トランスフォームスタイルをクリアして元のCSSクラスのスタイリングに戻す
             settingsPanel.style.transform = '';
             isSwiping = false;
         }, { passive: true });
@@ -2163,6 +2432,7 @@ function initApp() {
                     desc = '<strong>【ボックス呼吸】吸う4秒 / 止める4秒 / 吐く4秒 / 止める4秒</strong><br>緊張をほぐしながらも、意識をクリアに保ちます。自律神経をリセットし、高い集中力を引き出します。';
                 }
             } else {
+                // Bilingual
                 if (breathPattern === 'coherent') {
                     desc = '<strong>【コヒーレント呼吸】吸う5秒 / 吐く5秒</strong><br>心拍と呼吸の周期を同調させ、自律神経のバランスを整えます。最も深いリラクゼーションをもたらす基本の呼吸法です。<br><span class="en-sub" style="margin-top:4px; display:block; opacity:0.8; font-size: 10px;">[Coherent Breathing] Inhale 5s / Exhale 5s - Synchronizes breath with heart rhythm to balance the autonomic nervous system.</span>';
                 } else if (breathPattern === '478') {
@@ -2209,8 +2479,8 @@ function initApp() {
             patternButtons.forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             breathPattern = btn.getAttribute('data-pattern');
-            breathCycleTime = 0;
-            breathState = '';
+            breathCycleTime = 0; // 切り替え時にサイクルを最初からやり直す
+            breathState = ''; // ステート変更を強制トリガー
             updateBreathPatternUI();
         };
         btn.addEventListener('click', setPattern);
@@ -2220,8 +2490,10 @@ function initApp() {
         }, { passive: false });
     });
 
+    // 初期化時にUIを更新
     updateBreathPatternUI();
     
+    // 音が鳴らない場合の案内ダイアログ制御
     const btnSoundGuideOpen = document.getElementById('btn-sound-guide-open');
     const btnSoundGuideClose = document.getElementById('btn-sound-guide-close');
     const soundGuideDialog = document.getElementById('sound-guide-dialog');
@@ -2243,6 +2515,7 @@ function initApp() {
         }, { passive: false });
     }
 
+    // ジャイロ許可の確認フロー（唐突な表示を防ぐためのクッションダイアログ）
     const handleGameStartWithGyroCheck = (startCallback) => {
         const needsPermissionPrompt = (
             typeof DeviceOrientationEvent !== 'undefined' && 
@@ -2260,6 +2533,7 @@ function initApp() {
                 
                 const handleAllow = () => {
                     dialog.classList.remove('active');
+                    initAudio(); // 許可タップのジェスチャで音声解除
                     requestGyroPermission();
                     gyroPermissionRequested = true;
                     cleanup();
@@ -2268,6 +2542,7 @@ function initApp() {
                 
                 const handleDeny = () => {
                     dialog.classList.remove('active');
+                    initAudio(); // 拒否タップのジェスチャでも音声解除
                     gyroEnabled = false;
                     const chkGyro = document.getElementById('chk-gyro');
                     if (chkGyro) chkGyro.checked = false;
@@ -2301,76 +2576,58 @@ function initApp() {
             }
         }
         
+        // ダイアログ不要（iOS以外、またはすでに選択済みなど）な場合はそのまま開始
         startCallback();
     };
 
-    const btnPlayNormal = document.getElementById('btn-play-normal');
-    if (btnPlayNormal) {
-        const startNormal = () => {
+    // モード開始ボタン（Play / Endless / Meditation）
+    const bindModeStartButton = (btnId, setupFn) => {
+        const btn = document.getElementById(btnId);
+        if (!btn) return;
+        const start = () => {
+            initAudio(); // 最初のジェスチャで音声解除（ジャイロ確認より先）
             handleGameStartWithGyroCheck(() => {
                 initAudio();
-                meditationMode = false;
-                infiniteMode = false;
-                if (window.updatePopEffectUI) window.updatePopEffectUI('praise');
-                if (window.updateBreathGuideUI) window.updateBreathGuideUI(false);
+                setupFn();
                 const startOverlay = document.getElementById('start-overlay');
                 if (startOverlay) startOverlay.classList.remove('active');
                 startGame();
+                Promise.resolve(initAudio()).then(() => ensureAmbientAfterUnlock());
             });
         };
-        btnPlayNormal.addEventListener('click', startNormal);
-        btnPlayNormal.addEventListener('touchend', (e) => {
-            e.preventDefault();
-            startNormal();
-        }, { passive: false });
-    }
+        // touchstart / pointerdown の方が iOS の音声解除に有効
+        btn.addEventListener('touchstart', () => { initAudio(); }, { passive: true });
+        btn.addEventListener('pointerdown', () => { initAudio(); });
+        btn.addEventListener('click', start);
+    };
 
-    const btnPlayInfinite = document.getElementById('btn-play-infinite');
-    if (btnPlayInfinite) {
-        const startInfinite = () => {
-            handleGameStartWithGyroCheck(() => {
-                initAudio();
-                meditationMode = false;
-                infiniteMode = true;
-                if (window.updatePopEffectUI) window.updatePopEffectUI('praise');
-                if (window.updateBreathGuideUI) window.updateBreathGuideUI(false);
-                const startOverlay = document.getElementById('start-overlay');
-                if (startOverlay) startOverlay.classList.remove('active');
-                startGame();
-            });
-        };
-        btnPlayInfinite.addEventListener('click', startInfinite);
-        btnPlayInfinite.addEventListener('touchend', (e) => {
-            e.preventDefault();
-            startInfinite();
-        }, { passive: false });
-    }
+    bindModeStartButton('btn-play-normal', () => {
+        meditationMode = false;
+        infiniteMode = false;
+        if (window.updatePopEffectUI) window.updatePopEffectUI('praise');
+        if (window.updateBreathGuideUI) window.updateBreathGuideUI(false);
+    });
 
-    const btnPlayMeditation = document.getElementById('btn-play-meditation');
-    if (btnPlayMeditation) {
-        const startMeditation = () => {
-            handleGameStartWithGyroCheck(() => {
-                initAudio();
-                meditationMode = true;
-                infiniteMode = true;
-                if (window.updatePopEffectUI) window.updatePopEffectUI('none');
-                if (window.updateBreathGuideUI) window.updateBreathGuideUI(true);
-                const startOverlay = document.getElementById('start-overlay');
-                if (startOverlay) startOverlay.classList.remove('active');
-                startGame();
-            });
-        };
-        btnPlayMeditation.addEventListener('click', startMeditation);
-        btnPlayMeditation.addEventListener('touchend', (e) => {
-            e.preventDefault();
-            startMeditation();
-        }, { passive: false });
-    }
+    bindModeStartButton('btn-play-infinite', () => {
+        meditationMode = false;
+        infiniteMode = true;
+        if (window.updatePopEffectUI) window.updatePopEffectUI('praise');
+        if (window.updateBreathGuideUI) window.updateBreathGuideUI(false);
+    });
 
+    bindModeStartButton('btn-play-meditation', () => {
+        meditationMode = true;
+        infiniteMode = true;
+        if (window.updatePopEffectUI) window.updatePopEffectUI('none');
+        if (window.updateBreathGuideUI) window.updateBreathGuideUI(true);
+    });
+
+    // 再スタートボタン (リフレッシュ完了画面から)
     const btnRestart = document.getElementById('btn-restart');
     if (btnRestart) {
         btnRestart.addEventListener('click', () => {
             initAudio();
+            // リスタート時はスタート画面に戻る
             const overlay = document.getElementById('gameover-overlay');
             if (overlay) overlay.classList.remove('active');
             const startOverlay = document.getElementById('start-overlay');
@@ -2386,6 +2643,7 @@ function initApp() {
         }, { passive: false });
     }
     
+    // ゲーム終了ボタン (無限モードでも強制終了できるように引数 true を渡す)
     const btnQuit = document.getElementById('btn-quit-active');
     if (btnQuit) {
         btnQuit.addEventListener('click', () => endGame(true));
@@ -2395,13 +2653,11 @@ function initApp() {
         }, { passive: false });
     }
     
+    // ページ復帰時: running 状態なら Ambient のみ再開（ジェスチャ外では resume しない）
     const handleVisibilityOrFocus = () => {
-        if (gameActive) {
-            initAudio();
-            if (audioCtx) {
-                if (audioCtx.state !== 'running' || ambientOscs.length === 0) {
-                    startAmbientSound();
-                }
+        if (gameActive && audioCtx) {
+            if (audioCtx.state === 'running' && ambientOscs.length === 0) {
+                startAmbientSound();
             }
         }
     };
@@ -2411,7 +2667,14 @@ function initApp() {
         }
     });
     window.addEventListener('focus', handleVisibilityOrFocus);
+
+    // iOS: UIガードに遮られず解除できるよう capture で initAudio
+    window.addEventListener('touchstart', initAudio, { capture: true });
+    window.addEventListener('mousedown', initAudio, { capture: true });
+    window.addEventListener('click', initAudio, { capture: true });
+    window.addEventListener('touchend', initAudio, { capture: true });
     
+    // iOS Safariでのマルチタッチによるピンチズーム（拡大・縮小操作）をJS側でも強制的に防止
     document.addEventListener('gesturestart', (e) => {
         e.preventDefault();
     }, { passive: false });
@@ -2421,17 +2684,16 @@ function initApp() {
     document.addEventListener('gestureend', (e) => {
         e.preventDefault();
     }, { passive: false });
-    // 体験版（TRIAL）リトライボタンのイベント
+    
+    // 体験版（TRIAL）リトライ／購入／ロック
+    localStorage.removeItem('brain_reflexo_trial_play_count');
     const btnDemoRetry = document.getElementById('btn-demo-retry');
     if (btnDemoRetry) {
         const handleDemoRetry = () => {
-            if (trialPlayCount >= 2) {
-                return;
-            }
+            if (trialPlayCount >= 2) return;
             initAudio();
             const demoLimitOverlay = document.getElementById('demo-limit-overlay');
             if (demoLimitOverlay) demoLimitOverlay.classList.remove('active');
-            
             const startOverlay = document.getElementById('start-overlay');
             if (startOverlay) startOverlay.classList.add('active');
         };
@@ -2441,8 +2703,6 @@ function initApp() {
             handleDemoRetry();
         }, { passive: false });
     }
-
-    // 設定画面のロックカバークリックイベント
     document.querySelectorAll('.lock-cover').forEach(cover => {
         const handleLockClick = (e) => {
             e.stopPropagation();
@@ -2454,8 +2714,6 @@ function initApp() {
             handleLockClick(e);
         }, { passive: false });
     });
-
-    // 体験版終了モーダルの購入ボタン（タッチ時の不具合対策）
     const btnDemoPurchase = document.getElementById('btn-demo-purchase');
     if (btnDemoPurchase) {
         const handlePurchaseClick = (e) => {
@@ -2468,48 +2726,24 @@ function initApp() {
             handlePurchaseClick(e);
         }, { passive: false });
     }
-    
+
+    // アニメーションループ開始（ゲーム待機中も背景アニメは動かす）
     requestAnimationFrame(mainLoop);
 
-    // ★起動時はスタート画面をスキップして直接 Play モードを開始する
-    // （終了後のリスタートは従来どおりスタート画面に戻る）
-    meditationMode = false;
-    infiniteMode = false;
-    if (window.updatePopEffectUI) window.updatePopEffectUI('praise');
-    if (window.updateBreathGuideUI) window.updateBreathGuideUI(false);
-    const startOverlayOnLoad = document.getElementById('start-overlay');
-    if (startOverlayOnLoad) startOverlayOnLoad.classList.remove('active');
-
-    // ★AudioContextを事前生成しておく（suspended状態で待機）
-    // これにより、最初のユーザー操作で即座にresumeできる準備をする
-    initAudio();
-
-    // ★初回タッチ/クリック専用ハンドラ（once:true）
-    // ゲーム開始後、ユーザーが画面のどこかを最初に触れた瞬間に
-    // AudioContextをresumeして即座にアンビエント音を開始する
-    const _unlockAudioOnce = () => {
-        initAudio(); // resume() を実行 → onstatechange / .then() で startAmbientSound() が呼ばれる
-    };
-    window.addEventListener('touchstart', _unlockAudioOnce, { capture: true, once: true });
-    window.addEventListener('mousedown',  _unlockAudioOnce, { capture: true, once: true });
-    window.addEventListener('click',      _unlockAudioOnce, { capture: true, once: true });
-
-    startGame();
+    // AudioContext は事前生成のみ。Play ボタンのジェスチャで resume する
+    // （起動時に自動開始すると iOS では最初のタップまで無音・反応が不安定になる）
+    initAudio({ resume: false });
 }
+
 
 function updateDemoTimerUI() {
     const timerText = document.getElementById('demo-timer-text');
     if (!timerText) return;
-    
     const minutes = Math.floor(demoTimeLeft / 60);
     const seconds = demoTimeLeft % 60;
     timerText.textContent = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-    
-    if (demoTimeLeft <= 30) {
-        timerText.classList.add('danger');
-    } else {
-        timerText.classList.remove('danger');
-    }
+    if (demoTimeLeft <= 30) timerText.classList.add('danger');
+    else timerText.classList.remove('danger');
 }
 
 function endDemoGame(timeOut = false) {
@@ -2519,20 +2753,17 @@ function endDemoGame(timeOut = false) {
         demoTimer = null;
     }
     const timerContainer = document.getElementById('demo-timer-container');
-    if (timerContainer) {
-        timerContainer.classList.remove('active');
-    }
-    
+    if (timerContainer) timerContainer.classList.remove('active');
+
     playClearSound();
     triggerHaptic('success');
     stopAmbientSound(true);
-    
+
     const reportPops = document.getElementById('demo-report-pops');
     if (reportPops) reportPops.textContent = sessionPops;
-    
     const reportCombo = document.getElementById('demo-report-combo');
     if (reportCombo) reportCombo.textContent = maxComboCount;
-    
+
     const overlay = document.getElementById('demo-limit-overlay');
     if (overlay) {
         const titleEl = overlay.querySelector('h2');
@@ -2544,21 +2775,17 @@ function endDemoGame(timeOut = false) {
             if (titleEl) titleEl.textContent = 'REFRESH COMPLETE';
             if (descEl) descEl.innerHTML = '<span class="ja-text">脳が心地よくリフレッシュされました</span><br class="lang-divider"><span class="en-text">Your mind has been pleasantly refreshed</span>';
         }
-        
         const retryBtn = document.getElementById('btn-demo-retry');
         if (retryBtn) {
-            if (trialPlayCount >= 2) {
-                retryBtn.style.display = 'none';
-            } else {
-                retryBtn.style.display = '';
-            }
+            retryBtn.style.display = (trialPlayCount >= 2) ? 'none' : '';
         }
-        
         overlay.classList.add('active');
     }
 }
 
 function endGame(forceQuit = false) {
+    // 無限モードかつ強制終了でない場合は何もしない
+    // （ゲージのサイクルは incrementPopProgress() が担当するため、ここでのリセットは不要）
     if (infiniteMode && !forceQuit) {
         return;
     }
@@ -2568,10 +2795,9 @@ function endGame(forceQuit = false) {
         demoTimer = null;
     }
     const timerContainer = document.getElementById('demo-timer-container');
-    if (timerContainer) {
-        timerContainer.classList.remove('active');
-    }
+    if (timerContainer) timerContainer.classList.remove('active');
 
+    // 体験版: 通常クリアはデモ終了モーダルへ
     if (!forceQuit) {
         endDemoGame(false);
         return;
@@ -2579,11 +2805,14 @@ function endGame(forceQuit = false) {
 
     gameActive = false;
     
+    // クリア効果音の再生
     playClearSound();
     triggerHaptic('success');
     
+    // アンビエント音を即座に停止（フェードアウトではなく即時消音）
     stopAmbientSound(true);
     
+    // 統計情報の集計と表示
     const timeElapsed = ((performance.now() - gameStartTime) / 1000).toFixed(1);
     
     const reportTime = document.getElementById('report-time');
@@ -2604,23 +2833,23 @@ function endGame(forceQuit = false) {
         const comments = {
             bilingual: [
                 "あたまがサラッとクリアになりました。",
-                "圧倒的な集中力とリズムがシンクロし、脳内が完全にリセットされました！素晴らしい癒しの時間です。",
-                "心地よいリズムに乗って、素晴らしいプレイでした。心がすっと軽くなっています。",
-                "時間を忘れて深くリラックスできたようです。日常から離れた、上質な休息時間になりました。",
-                "ゆったりとした時間を過ごすことで、脳の緊張が和らぎました。深呼吸を忘れずに。"
+                "圧倒的な集中力とリズムがシンクロし、脳内が気持ちよくリセットされました！",
+                "心地よいリズムに乗って、素晴らしいプレイです。心がすっと軽くなっています。",
+                "時間を忘れて深くリラックスできたようです。上質な休息時間になりました。",
+                "ゆったりとした時間を過ごすことで、脳の緊張が和らぎました。"
             ],
             en: [
                 "Your mind feels clear and refreshed.",
-                "Incredible focus and rhythm — your mind has been fully reset. A wonderful healing session!",
-                "Riding a comfortable rhythm — your heart feels light and free.",
-                "You found deep relaxation, forgetting the time. A quality moment of rest from everyday life.",
-                "Even in a short time, your brain got a well-deserved rest. Move forward with a clear mind."
+                "Incredible focus and rhythm — your mind has been pleasantly reset!",
+                "Riding a comfortable rhythm — wonderful play. Your heart feels light and free.",
+                "You found deep relaxation, forgetting the time. A quality moment of rest.",
+                "Taking it slow eased the tension in your mind."
             ]
         };
 
         let idx = 0;
-        if (maxComboCount >= 36) idx = 1;
-        else if (maxComboCount >= 25) idx = 2;
+        if (maxComboCount >= 70) idx = 1;
+        else if (maxComboCount >= 40) idx = 2;
         else if (timeElapsed >= 90) idx = 3;
         else if (timeElapsed >= 40) idx = 4;
 
@@ -2628,53 +2857,91 @@ function endGame(forceQuit = false) {
         reportMsg.textContent = comments[lang][idx];
     }
     
+    // リフレッシュ完了画面を表示
     const overlay = document.getElementById('gameover-overlay');
     if (overlay) {
         overlay.classList.add('active');
     }
 }
 
+// 泡が弾ける「ピチョン」音を合成して再生（ディレイ・エコー付き）  プチッと弾ける破裂音レイヤー
+let _lastPopSoundAt = 0;
+let _popSoundBurst = 0;
 function playPopSound(combo = 1, originX) {
-    initAudio();
-    if (!audioCtx) return;
-    
-    if (audioCtx.state !== 'running') {
-        audioCtx.resume().then(() => {
-            playPopSound(combo, originX);
-        }).catch(() => {});
+    if (!audioCtx) {
+        initAudio();
         return;
     }
     
+    // ブラウザの自動再生ブロック対策（タップジェスチャ内なら解除を再試行）
+    if (audioCtx.state !== 'running') {
+        initAudio();
+        if (audioCtx.state !== 'running') {
+            // resume完了後に同じパラメータで1回だけ鳴らす
+            const c = combo;
+            const x = originX;
+            Promise.resolve(audioResumePromise).then(() => {
+                if (audioCtx && audioCtx.state === 'running') {
+                    playPopSound(c, x);
+                }
+            }).catch(() => {});
+            return;
+        }
+    }
+
+    // 連鎖などで短時間に大量発火すると iOS が固まるため間引き
+    const nowMs = performance.now();
+    if (nowMs - _lastPopSoundAt < 45) {
+        _popSoundBurst++;
+        if (_popSoundBurst > 2) return;
+    } else {
+        _popSoundBurst = 0;
+    }
+    _lastPopSoundAt = nowMs;
+    
     try {
         const now = audioCtx.currentTime;
+        
+        // SEボリュームが0なら再生しない
         if (volumeSE <= 0.001) return;
         
+        // ベースのゲイン量設定
         const maxVol = 0.28 * volumeSE;
         
-        let popScale = [261.63, 311.13, 349.23, 392.00, 466.16];
+        // 美しいペンタトニックスケール (テーマに応じた調整)
+        let popScale = [261.63, 311.13, 349.23, 392.00, 466.16]; // C4, Eb4, F4, G4, Bb4
         if (currentTheme === 'sakura') {
-            popScale = [293.66, 329.63, 392.00, 440.00, 523.25];
+            popScale = [293.66, 329.63, 392.00, 440.00, 523.25]; // D4, E4, G4, A4, C5 (A major pentatonic)
         } else if (currentTheme === 'aurora') {
-            popScale = [261.63, 293.66, 329.63, 392.00, 440.00];
+            popScale = [261.63, 293.66, 329.63, 392.00, 440.00]; // C4, D4, E4, G4, A4 (C major pentatonic)
         } else if (currentTheme === 'starry') {
-            popScale = [329.63, 392.00, 440.00, 523.25, 587.33];
+            popScale = [329.63, 392.00, 440.00, 523.25, 587.33]; // E4, G4, A4, C5, D5 (Cosmic scale)
         }
         
+        // 画面幅に対してX座標がどの位置にあるかで音程（インデックス）を決める
         const xRatio = (originX !== undefined && showerCanvas) 
-            ? Math.max(0, Math.min(0.99, originX / showerCanvas.width)) 
+            ? Math.max(0, Math.min(0.99, originX / viewW)) 
             : 0.5;
         const scaleIndex = Math.floor(xRatio * popScale.length);
         let baseFreq = popScale[scaleIndex];
         
+        // コンボ数が上がると、オクターブが上昇する（4コンボごとに1オクターブ、最大2オクターブまでシフト）
         const octaveShift = Math.floor((combo - 1) / 4);
         baseFreq = baseFreq * Math.pow(2, Math.min(2, octaveShift));
         
+        // 各種ノード初期化
         const soundGain = audioCtx.createGain();
         const delay = audioCtx.createDelay();
         const feedback = audioCtx.createGain();
         
-        const panner = audioCtx.createStereoPanner();
-        panner.pan.setValueAtTime((xRatio * 2) - 1, now);
+        // 左右のパン設定（未対応端末はGainでフォールバック）
+        let panner;
+        if (typeof audioCtx.createStereoPanner === 'function') {
+            panner = audioCtx.createStereoPanner();
+            panner.pan.setValueAtTime((xRatio * 2) - 1, now);
+        } else {
+            panner = audioCtx.createGain();
+        }
         panner.connect(audioCtx.destination);
         
         soundGain.connect(panner);
@@ -2682,6 +2949,9 @@ function playPopSound(combo = 1, originX) {
         
         delay.delayTime.setValueAtTime(0.18, now);
         feedback.gain.setValueAtTime(0.22, now);
+        // フィードバックを早めに切ってノード滞留を防ぐ
+        feedback.gain.setValueAtTime(0.22, now + 0.2);
+        feedback.gain.linearRampToValueAtTime(0, now + 0.4);
         
         delay.connect(feedback);
         feedback.connect(delay);
@@ -2690,12 +2960,13 @@ function playPopSound(combo = 1, originX) {
         let duration = 0.08 + Math.min(combo - 1, 5) * 0.006;
         
         soundGain.gain.setValueAtTime(0, now);
-        soundGain.gain.linearRampToValueAtTime(maxVol, now + 0.003);
+        soundGain.gain.linearRampToValueAtTime(maxVol, now + 0.003); // 3msアタック
         
+        // --- 1. Water Droplet (メインの水滴音 - サイン波) ---
         const osc = audioCtx.createOscillator();
         osc.connect(soundGain);
         osc.type = 'sine';
-        const targetFreq = baseFreq * 2.5;
+        const targetFreq = baseFreq * 2.5; // より伸びやかなピチョン感を出すために2.2から2.5に引き上げ
         osc.frequency.setValueAtTime(baseFreq, now);
         osc.frequency.exponentialRampToValueAtTime(targetFreq, now + duration * 0.85);
         
@@ -2704,6 +2975,7 @@ function playPopSound(combo = 1, originX) {
         osc.start(now);
         osc.stop(now + duration + 0.05);
 
+        // --- 1b. Warm Droplet Body (弾力感を持たせるふくよかなボディ音 - 三角波のブレンド) ---
         const oscBody = audioCtx.createOscillator();
         const bodyGain = audioCtx.createGain();
         oscBody.connect(bodyGain).connect(soundGain);
@@ -2711,19 +2983,21 @@ function playPopSound(combo = 1, originX) {
         oscBody.frequency.setValueAtTime(baseFreq, now);
         oscBody.frequency.exponentialRampToValueAtTime(targetFreq * 0.78, now + duration * 0.85);
         
-        bodyGain.gain.setValueAtTime(maxVol * 0.22, now);
+        bodyGain.gain.setValueAtTime(maxVol * 0.22, now); // サイン波ボディに対して22%ブレンドして豊かな丸みを出す
         bodyGain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
         
         oscBody.start(now);
         oscBody.stop(now + duration + 0.05);
         
+        // --- 2. Secondary Drip (跳ね返りの小水滴音 - ステレオ出力) ---
+        // メイン音からわずかに遅れて、より高い音程の水滴が弾けることで、本物の水のような「ピチャン」感を引き立てる
         const secOsc = audioCtx.createOscillator();
         const secGain = audioCtx.createGain();
-        secOsc.connect(secGain).connect(panner);
+        secOsc.connect(secGain).connect(panner); // 直接パンナーに接続
         secOsc.type = 'sine';
         
-        const secStart = now + 0.035;
-        const secDuration = duration * 0.6;
+        const secStart = now + 0.035; // 35ms遅らせて発音
+        const secDuration = duration * 0.6; // 短く弾ける音
         const secBaseFreq = baseFreq * 1.6;
         const secTargetFreq = baseFreq * 3.5;
         
@@ -2732,19 +3006,21 @@ function playPopSound(combo = 1, originX) {
         
         secGain.gain.setValueAtTime(0, now);
         secGain.gain.setValueAtTime(0, secStart);
-        secGain.gain.linearRampToValueAtTime(maxVol * 0.45, secStart + 0.002);
+        secGain.gain.linearRampToValueAtTime(maxVol * 0.45, secStart + 0.002); // メイン音の45%の音量
         secGain.gain.exponentialRampToValueAtTime(0.0001, secStart + secDuration);
         
         secOsc.start(secStart);
         secOsc.stop(secStart + secDuration + 0.05);
         
+        // --- 3. Click / Burst (膜がプチッと破れる瞬間の空気の抜け音 - 三角波) ---
         const clickOsc = audioCtx.createOscillator();
         const clickGain = audioCtx.createGain();
         clickOsc.connect(clickGain).connect(panner);
         
-        clickOsc.type = 'triangle';
+        clickOsc.type = 'triangle'; // より柔らかく抜け感のある波形
         const clickFreq = 2200 + Math.min(combo - 1, 8) * 150;
         clickOsc.frequency.setValueAtTime(clickFreq, now);
+        // 急激にピッチを下げる（ピッチスイープ）ことで「プチッ」という空気の破裂感を生成
         clickOsc.frequency.exponentialRampToValueAtTime(clickFreq * 0.4, now + 0.012);
         
         clickGain.gain.setValueAtTime(0, now);
@@ -2754,7 +3030,9 @@ function playPopSound(combo = 1, originX) {
         clickOsc.start(now);
         clickOsc.stop(now + 0.03);
 
-        const noiseBufferSize = audioCtx.sampleRate * 0.04;
+        // --- 4. Splash Fizz (みずみずしさを引き立てる水飛沫ノイズ) ---
+        // バンドパスフィルターを通したホワイトノイズを重ねて、弾けた瞬間の微細な水飛沫（シュワッ）をシミュレート
+        const noiseBufferSize = audioCtx.sampleRate * 0.04; // 40msのノイズバッファ
         const noiseBuffer = audioCtx.createBuffer(1, noiseBufferSize, audioCtx.sampleRate);
         const noiseData = noiseBuffer.getChannelData(0);
         for (let i = 0; i < noiseBufferSize; i++) {
@@ -2766,9 +3044,9 @@ function playPopSound(combo = 1, originX) {
         
         const noiseFilter = audioCtx.createBiquadFilter();
         noiseFilter.type = 'bandpass';
-        const noiseFilterFreq = 3400 + Math.min(combo - 1, 8) * 120;
+        const noiseFilterFreq = 3400 + Math.min(combo - 1, 8) * 120; // コンボ音程に追従する高周波
         noiseFilter.frequency.setValueAtTime(noiseFilterFreq, now);
-        noiseFilter.Q.setValueAtTime(4.0, now);
+        noiseFilter.Q.setValueAtTime(4.0, now); // Q値を少し高めにして金属質で涼しげな響きに
         
         const noiseGain = audioCtx.createGain();
         noiseGain.gain.setValueAtTime(0, now);
@@ -2779,6 +3057,7 @@ function playPopSound(combo = 1, originX) {
         noiseSource.start(now);
         noiseSource.stop(now + 0.04);
         
+        // クリーンアップ
         setTimeout(() => {
             try {
                 osc.disconnect();
@@ -2796,7 +3075,7 @@ function playPopSound(combo = 1, originX) {
                 delay.disconnect();
                 feedback.disconnect();
             } catch (e) {}
-        }, 1500);
+        }, 700);
         
     } catch (e) {
         console.warn("効果音再生エラー:", e);
@@ -2804,53 +3083,54 @@ function playPopSound(combo = 1, originX) {
 }
 
 
+// フィーバー突入・花火連打時のチャイムスイープ音
 function playFeverStartSound(originX) {
-    initAudio();
     if (!audioCtx) return;
-    
-    if (audioCtx.state !== 'running') {
-        audioCtx.resume().then(() => {
-            playFeverStartSound(originX);
-        }).catch(() => {});
-        return;
-    }
+
+    if (audioCtx.state !== 'running') return;
     
     try {
         const now = audioCtx.currentTime;
         const xRatio = (originX !== undefined && showerCanvas) 
-            ? Math.max(0, Math.min(0.99, originX / showerCanvas.width)) 
+            ? Math.max(0, Math.min(0.99, originX / viewW)) 
             : 0.5;
         const basePan = xRatio * 2 - 1;
         
-        const chimeScale = [523.25, 659.25, 783.99, 987.77, 1046.50, 1318.51, 1567.98, 1975.53];
+        // 神秘的なウインドチャイム・ペンタトニックスケール (より高域で広く澄んだ音階)
+        const chimeScale = [523.25, 659.25, 783.99, 987.77, 1046.50, 1318.51, 1567.98, 1975.53]; // C5, E5, G5, B5, C6, E6, G6, B6
         
+        // 共通のステレオディレイとフィルタ回路を作成（神秘的な広がりを演出）
         const delay = audioCtx.createDelay(1.0);
         const feedback = audioCtx.createGain();
         const filter = audioCtx.createBiquadFilter();
         
-        delay.delayTime.setValueAtTime(0.24, now);
-        feedback.gain.setValueAtTime(0.48, now);
+        delay.delayTime.setValueAtTime(0.24, now); // 240ms のエコー
+        feedback.gain.setValueAtTime(0.48, now); // 48% フィードバック
         
         filter.type = 'highpass';
-        filter.frequency.setValueAtTime(1000, now);
+        filter.frequency.setValueAtTime(1000, now); // 低域の残響をカットしてクリスタルな質感に
         
+        // 接続: delay -> filter -> feedback -> delay
         delay.connect(filter);
         filter.connect(feedback);
         feedback.connect(delay);
         
+        // 出力ゲイン（ディレイ音のミックス量）
         const delayMix = audioCtx.createGain();
-        delayMix.gain.setValueAtTime(0.25, now);
+        delayMix.gain.setValueAtTime(0.25, now); // ディレイ音量を適切に設定
         
         filter.connect(delayMix);
         delayMix.connect(audioCtx.destination);
         
         chimeScale.forEach((freq, idx) => {
-            const timeOffset = idx * 0.055;
+            const timeOffset = idx * 0.055; // ややゆったりとしたスイープ（55ms間隔）
             const playTime = now + timeOffset;
             
+            // A. メイン音 (純粋なサイン波で優しく)
             const osc = audioCtx.createOscillator();
             const gain = audioCtx.createGain();
             
+            // B. キラキラしたオクターブ上の倍音 (サイン波)
             const oscHigh = audioCtx.createOscillator();
             const gainHigh = audioCtx.createGain();
             
@@ -2858,6 +3138,7 @@ function playFeverStartSound(originX) {
             try {
                 if (audioCtx.createStereoPanner) {
                     panner = audioCtx.createStereoPanner();
+                    // 音が進むにつれて左右に美しく広がるパンニング
                     const panOffset = (idx % 2 === 0 ? 0.35 : -0.35) * (idx / chimeScale.length);
                     panner.pan.setValueAtTime(Math.max(-1.0, Math.min(1.0, basePan + panOffset)), playTime);
                 }
@@ -2866,27 +3147,33 @@ function playFeverStartSound(originX) {
             const dest = panner ? panner : audioCtx.destination;
             if (panner) panner.connect(audioCtx.destination);
             
+            // メイン接続
             osc.connect(gain);
             gain.connect(dest);
-            gain.connect(delay);
+            gain.connect(delay); // ディレイ回路へセンド
             
+            // 倍音接続
             oscHigh.connect(gainHigh);
             gainHigh.connect(dest);
             gainHigh.connect(delay);
             
             osc.type = 'sine';
             osc.frequency.setValueAtTime(freq, playTime);
+            // 音の終盤にわずかに周波数をゆらして温かみを出す
             osc.frequency.linearRampToValueAtTime(freq * 1.002, playTime + 0.6);
             
             oscHigh.type = 'sine';
-            oscHigh.frequency.setValueAtTime(freq * 2.0, playTime);
+            oscHigh.frequency.setValueAtTime(freq * 2.0, playTime); // 1オクターブ上
             
-            const duration = 0.7;
+            // エンベロープ設定
+            const duration = 0.7; // 余韻を長めに
             
+            // メインゲイン
             gain.gain.setValueAtTime(0, playTime);
-            gain.gain.linearRampToValueAtTime(0.06, playTime + 0.025);
+            gain.gain.linearRampToValueAtTime(0.06, playTime + 0.025); // 25msかけて優しくアタック
             gain.gain.exponentialRampToValueAtTime(0.0001, playTime + duration);
             
+            // 倍音ゲイン (かすかに重ねて空気感を出す)
             gainHigh.gain.setValueAtTime(0, playTime);
             gainHigh.gain.linearRampToValueAtTime(0.015, playTime + 0.035);
             gainHigh.gain.exponentialRampToValueAtTime(0.0001, playTime + duration * 0.7);
@@ -2908,6 +3195,7 @@ function playFeverStartSound(originX) {
             }, (timeOffset + duration + 0.1) * 1000);
         });
         
+        // ディレイ全体のクリーンアップ
         setTimeout(() => {
             try {
                 delay.disconnect();
@@ -2922,16 +3210,18 @@ function playFeverStartSound(originX) {
     }
 }
 
+// フィーバー中にタップするとなるバックグランドチャイム音（極めて綺麗で短い高音サイン波）
 function playFeverChimeBackground(originX) {
     if (!audioCtx) return;
     try {
         const now = audioCtx.currentTime;
         const xRatio = (originX !== undefined && showerCanvas) 
-            ? Math.max(0, Math.min(0.99, originX / showerCanvas.width)) 
+            ? Math.max(0, Math.min(0.99, originX / viewW)) 
             : 0.5;
         const basePan = xRatio * 2 - 1;
         
-        const feverScale = [1567.98, 1760.00, 2093.00, 2349.32, 2637.02];
+        // フィーバー用の超高域音階
+        const feverScale = [1567.98, 1760.00, 2093.00, 2349.32, 2637.02]; // G6, A6, C7, D7, E7
         const freq = feverScale[Math.floor(Math.random() * feverScale.length)];
         
         const osc = audioCtx.createOscillator();
@@ -2954,7 +3244,7 @@ function playFeverChimeBackground(originX) {
         osc.frequency.setValueAtTime(freq, now);
         
         gain.gain.setValueAtTime(0, now);
-        gain.gain.linearRampToValueAtTime(0.035, now + 0.001);
+        gain.gain.linearRampToValueAtTime(0.035, now + 0.001); // 薄めの音量で
         gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
         
         osc.start(now);
@@ -2971,15 +3261,9 @@ function playFeverChimeBackground(originX) {
 }
 
 function playClearSound() {
-    initAudio();
     if (!audioCtx) return;
-    
-    if (audioCtx.state !== 'running') {
-        audioCtx.resume().then(() => {
-            playClearSound();
-        }).catch(() => {});
-        return;
-    }
+
+    if (audioCtx.state !== 'running') return;
     
     try {
         const now = audioCtx.currentTime;
@@ -3000,7 +3284,7 @@ function playClearSound() {
             const duration = 0.22;
             gain.gain.setValueAtTime(0, now + timeOffset);
             gain.gain.linearRampToValueAtTime(0.12, now + timeOffset + 0.002);
-            gain.gain.exponentialRampToValueAtTime(0.0001, now + timeOffset + duration);
+            gain.gain.exponentialRampToValueAtTime(0.0001, now + timeOffset + duration); // 謖焚貂幄｡ｰ
             
             const hitOsc = audioCtx.createOscillator();
             const hitGain = audioCtx.createGain();
@@ -3033,29 +3317,24 @@ function playClearSound() {
     }
 }
 
+// 流れるようなフロー環境音の開始（フェードイン／コーラス／リバーブ／LFO付き）
 function startAmbientSound() {
-    if (!gameActive) return;
+    if (!gameActive) return; // ゲームがアクティブでない場合は開始しない
     if (!audioCtx) {
-        initAudio();
-        if (!audioCtx) return;
-    }
-    
-    if (audioCtx.state !== 'running') {
-        if (!isResuming) {
-            isResuming = true;
-            audioCtx.resume().then(() => {
-                isResuming = false;
-                if (gameActive) {
-                    stopAmbientSound(true);
-                    startAmbientSound();
-                }
-            }).catch(() => {
-                isResuming = false;
-            });
-        }
+        pendingAmbientStart = true;
         return;
     }
+
+    // AudioContextがrunning状態でなければ、解除完了後に開始するよう予約する
+    // resume()はユーザージェスチャ内の initAudio() のみが担当する
+    if (audioCtx.state !== 'running') {
+        pendingAmbientStart = true;
+        return;
+    }
+
+    pendingAmbientStart = false;
     
+    // すでに再生中の場合は何もしない
     if (ambientOscs.length > 0) return;
     
     try {
@@ -3083,6 +3362,7 @@ function startAmbientSound() {
         
         const chorusLFO = audioCtx.createOscillator();
         chorusLFO.frequency.setValueAtTime(0.45, now);
+        chorusLFO.frequency.setValueAtTime(0.45, now);
         
         const chorusLFOGain = audioCtx.createGain();
         chorusLFOGain.gain.setValueAtTime(0.0045, now);
@@ -3100,9 +3380,9 @@ function startAmbientSound() {
         const revDelay2 = audioCtx.createDelay();
         const revFeedback2 = audioCtx.createGain();
         
-        revDelay1.delayTime.setValueAtTime(0.12, now);
+        revDelay1.delayTime.setValueAtTime(0.12, now); // 120ms delay
         revFeedback1.gain.setValueAtTime(0.70, now);
-        revDelay2.delayTime.setValueAtTime(0.17, now);
+        revDelay2.delayTime.setValueAtTime(0.17, now); // 170ms delay
         revFeedback2.gain.setValueAtTime(0.65, now);
         
         revDelay1.connect(revFeedback1);
@@ -3133,13 +3413,15 @@ function startAmbientSound() {
         
         ambientGain.connect(audioCtx.destination);
         
+        // 5. 浮遊感の極みとなる美しいテンション和音 (C4, G4, B4, D5, G5)
         const freqs = [261.63, 392.00, 493.88, 587.33, 783.99];
         
         freqs.forEach((freq, idx) => {
             const osc = audioCtx.createOscillator();
-            osc.type = 'sine';
+            osc.type = 'sine'; // 響きをまろやかにするためにサイン波を使用
             
-            const detuneOffset = (idx % 2 === 0 ? 2 : -2) + (Math.random() - 0.5) * 1;
+            // わずかにチューンして、コーラスと合わさった極上のシャワー感を作る
+            const detuneOffset = (idx % 2 === 0 ? 2 : -2) + (Math.random() - 0.5) * 1; // 約2セント
             osc.detune.setValueAtTime(detuneOffset, now);
             
             osc.frequency.setValueAtTime(freq, now);
@@ -3149,71 +3431,89 @@ function startAmbientSound() {
             ambientOscs.push(osc);
         });
 
+        // --- ソルフェジオ周波数 (528Hz / 396Hz) の追加 ---
+        // 528Hz ゲインノード作成と初期フェードイン (528Hzは聴こえやすいため 0.006倍率)
         solfeggioGain528 = audioCtx.createGain();
         solfeggioGain528.gain.setValueAtTime(0, now);
         solfeggioGain528.gain.linearRampToValueAtTime(0.006 * volumeSolfeggio, now + 3.5);
         ambientNodes.push(solfeggioGain528);
 
+        // 396Hz ゲインノード作成と初期フェードイン (396Hzは 0.009倍率でしっかりと)
         solfeggioGain396 = audioCtx.createGain();
         solfeggioGain396.gain.setValueAtTime(0, now);
         solfeggioGain396.gain.linearRampToValueAtTime(0.009 * volumeSolfeggio, now + 3.5);
         ambientNodes.push(solfeggioGain396);
 
+        // ソルフェジオ専用の深リバーブ（ディレイフィードバック）回路の構築
+        // 音を空間的にマイルドにするローパスフィルター（高音のキンキン感を和らげる）
         const solfeggioFilter = audioCtx.createBiquadFilter();
         solfeggioFilter.type = 'lowpass';
-        solfeggioFilter.frequency.setValueAtTime(650, now);
+        solfeggioFilter.frequency.setValueAtTime(650, now); // 650Hz
         ambientNodes.push(solfeggioFilter);
 
+        // 左右のステレオディレイ
         const solfeggioDelayL = audioCtx.createDelay();
         const solfeggioDelayR = audioCtx.createDelay();
-        solfeggioDelayL.delayTime.setValueAtTime(0.28, now);
-        solfeggioDelayR.delayTime.setValueAtTime(0.38, now);
+        solfeggioDelayL.delayTime.setValueAtTime(0.28, now); // 280ms
+        solfeggioDelayR.delayTime.setValueAtTime(0.38, now); // 380ms
         ambientNodes.push(solfeggioDelayL, solfeggioDelayR);
 
+        // フィードバックゲイン (安全な減衰設計: 0.50)
         const solfeggioFeedbackL = audioCtx.createGain();
         const solfeggioFeedbackR = audioCtx.createGain();
         solfeggioFeedbackL.gain.setValueAtTime(0.50, now);
         solfeggioFeedbackR.gain.setValueAtTime(0.50, now);
         ambientNodes.push(solfeggioFeedbackL, solfeggioFeedbackR);
 
+        // 交差フィードバック（ピンポンディレイ効果: 0.20）
         const solfeggioCrossL = audioCtx.createGain();
         const solfeggioCrossR = audioCtx.createGain();
         solfeggioCrossL.gain.setValueAtTime(0.20, now);
         solfeggioCrossR.gain.setValueAtTime(0.20, now);
         ambientNodes.push(solfeggioCrossL, solfeggioCrossR);
 
+        // ソルフェジオ出力ミックスゲイン
         const solfeggioDirectGain = audioCtx.createGain();
-        solfeggioDirectGain.gain.setValueAtTime(0.35, now);
+        solfeggioDirectGain.gain.setValueAtTime(0.35, now); // 直接音は控えめ
         ambientNodes.push(solfeggioDirectGain);
 
         const solfeggioRevMix = audioCtx.createGain();
-        solfeggioRevMix.gain.setValueAtTime(0.95, now);
+        solfeggioRevMix.gain.setValueAtTime(0.95, now); // リバーブ音を強めにかける (95%)
         ambientNodes.push(solfeggioRevMix);
 
+        // 接続
+        // 528Hz と 396Hz のゲインをフィルターへ
         solfeggioGain528.connect(solfeggioFilter);
         solfeggioGain396.connect(solfeggioFilter);
 
+        // 直接音の接続
         solfeggioFilter.connect(solfeggioDirectGain);
-        solfeggioDirectGain.connect(audioCtx.destination);
+        solfeggioDirectGain.connect(audioCtx.destination); // BGM音量に影響されず独立して出力
 
+        // リバーブループ接続
         solfeggioFilter.connect(solfeggioDelayL);
         solfeggioFilter.connect(solfeggioDelayR);
 
+        // Lチャンネルフィードバックループ
         solfeggioDelayL.connect(solfeggioFeedbackL);
         solfeggioFeedbackL.connect(solfeggioDelayL);
 
+        // Rチャンネルフィードバックループ
         solfeggioDelayR.connect(solfeggioFeedbackR);
         solfeggioFeedbackR.connect(solfeggioDelayR);
 
+        // 交差フィードバックループ (立体感を広げる)
         solfeggioDelayL.connect(solfeggioCrossL);
         solfeggioCrossL.connect(solfeggioDelayR);
         solfeggioDelayR.connect(solfeggioCrossR);
         solfeggioCrossR.connect(solfeggioDelayL);
 
+        // リバーブミックス接続
         solfeggioDelayL.connect(solfeggioRevMix);
         solfeggioDelayR.connect(solfeggioRevMix);
-        solfeggioRevMix.connect(audioCtx.destination);
+        solfeggioRevMix.connect(audioCtx.destination); // 独立出力
 
+        // 528Hz オシレーター (ピュアなサイン波)
         const osc528 = audioCtx.createOscillator();
         osc528.type = 'sine';
         osc528.frequency.setValueAtTime(528, now);
@@ -3221,6 +3521,7 @@ function startAmbientSound() {
         osc528.start(now);
         solfeggioOscs.push(osc528);
 
+        // 396Hz オシレーター (ピュアなサイン波)
         const osc396 = audioCtx.createOscillator();
         osc396.type = 'sine';
         osc396.frequency.setValueAtTime(396, now);
@@ -3233,12 +3534,13 @@ function startAmbientSound() {
     }
 }
 
+// 柔らかな環境背景音の停止（2秒のフェードアウト）
 function stopAmbientSound(immediate = false) {
     if (ambientOscs.length === 0 && solfeggioOscs.length === 0) return;
     
     try {
         const now = audioCtx.currentTime;
-        const fadeTime = immediate ? 0.05 : 0.5;
+        const fadeTime = immediate ? 0.05 : 0.5; // 即時なら50ms、通常は0.5秒で素早く消音
         
         if (ambientGain) {
             try {
@@ -3284,18 +3586,21 @@ function stopAmbientSound(immediate = false) {
         solfeggioGain396 = null;
         
         setTimeout(() => {
+            // オシレーターの完全停止と接続解除
             currentOscs.forEach(osc => {
                 try {
                     osc.stop();
                     osc.disconnect();
                 } catch (e) {}
             });
+            // ソルフェジオオシレーターの完全停止と接続解除
             currentSolfeggioOscs.forEach(osc => {
                 try {
                     osc.stop();
                     osc.disconnect();
                 } catch (e) {}
             });
+            // エフェクトノードの一括接続解除
             currentNodes.forEach(node => {
                 try {
                     node.disconnect();
@@ -3307,23 +3612,21 @@ function stopAmbientSound(immediate = false) {
     }
 }
 
+// 流星群が流れる際のキラキラしたステレオ通過音を合成再生
 function playMeteorSound(originX) {
-    initAudio();
     if (!audioCtx) return;
-    
-    if (audioCtx.state !== 'running') {
-        audioCtx.resume().then(() => {
-            playMeteorSound(originX);
-        }).catch(() => {});
-        return;
-    }
+
+    if (audioCtx.state !== 'running') return;
     
     try {
         const now = audioCtx.currentTime;
+        
+        // 発生元のX座標から基準定位（パン）を計算（画面の左端＝-1.0、右端＝+1.0）
         const basePan = (originX !== undefined && showerCanvas) 
-            ? Math.max(-1.0, Math.min(1.0, (originX / showerCanvas.width) * 2 - 1)) 
+            ? Math.max(-1.0, Math.min(1.0, (originX / viewW) * 2 - 1)) 
             : 0;
         
+        // 1. 全体を包む「シュワーー」という風のような通過音 (FM風の周波数スイープ)
         const sweepOsc = audioCtx.createOscillator();
         const sweepFilter = audioCtx.createBiquadFilter();
         const sweepGain = audioCtx.createGain();
@@ -3338,7 +3641,7 @@ function playMeteorSound(originX) {
         sweepFilter.frequency.exponentialRampToValueAtTime(2800, now + 1.0);
         
         sweepGain.gain.setValueAtTime(0, now);
-        sweepGain.gain.linearRampToValueAtTime(0.06, now + 0.3);
+        sweepGain.gain.linearRampToValueAtTime(0.06, now + 0.3); // 0.3秒でアタック
         sweepGain.gain.exponentialRampToValueAtTime(0.0001, now + 1.3);
         
         sweepOsc.connect(sweepFilter);
@@ -3348,7 +3651,9 @@ function playMeteorSound(originX) {
         sweepOsc.start(now);
         sweepOsc.stop(now + 1.4);
         
-        const scale = [1567.98, 1760.00, 1975.53, 2349.32, 2637.02, 3135.96, 3520.00, 3951.07];
+        // 2. 「チリーン」「ピキーン」という超高音のキラキラ星屑音 (8音)
+        // 左右へパンニングさせて立体感を出す
+        const scale = [1567.98, 1760.00, 1975.53, 2349.32, 2637.02, 3135.96, 3520.00, 3951.07]; // G6~B7の超高音
         const starCount = 8;
         
         for (let i = 0; i < starCount; i++) {
@@ -3371,6 +3676,7 @@ function playMeteorSound(originX) {
                 osc.connect(gain);
                 gain.connect(panner);
                 panner.connect(audioCtx.destination);
+                // 発生源のパン（basePan）を基準に、左右に散らして立体感を表現
                 const panVal = basePan + (Math.random() - 0.5) * 0.8;
                 panner.pan.setValueAtTime(Math.max(-1.0, Math.min(1.0, panVal)), now + timeOffset);
             } else {
@@ -3398,6 +3704,7 @@ function playMeteorSound(originX) {
             }, (timeOffset + duration + 0.2) * 1000);
         }
         
+        // sweepOscのクリーンアップ
         setTimeout(() => {
             try {
                 sweepOsc.disconnect();
@@ -3411,21 +3718,22 @@ function playMeteorSound(originX) {
     }
 }
 
+// 流星の大爆発の際のキラキラした爽快な宇宙爆発音を合成再生
 function playMeteorBigExplosionSound(originX) {
-    initAudio();
     if (!audioCtx) return;
-    
-    if (audioCtx.state !== 'running') {
-        audioCtx.resume().then(() => {}).catch(() => {});
-        return;
-    }
+
+    if (audioCtx.state !== 'running') return;
     
     try {
         const now = audioCtx.currentTime;
+        
+        // 発生元のX座標から基準定位（パン）を計算（画面の左端＝-1.0、右端＝+1.0）
         const basePan = (originX !== undefined && showerCanvas) 
-            ? Math.max(-1.0, Math.min(1.0, (originX / showerCanvas.width) * 2 - 1)) 
+            ? Math.max(-1.0, Math.min(1.0, (originX / viewW) * 2 - 1)) 
             : 0;
             
+        // 1. 爆発の際の衝突音と重なる爽快な「スクラッチ音」
+        // Q値を高めて、キラキラした周波数成分を強調
         const sweepOsc1 = audioCtx.createOscillator();
         const sweepOsc2 = audioCtx.createOscillator();
         const sweepFilter = audioCtx.createBiquadFilter();
@@ -3474,51 +3782,57 @@ function playMeteorBigExplosionSound(originX) {
         sweepOsc2.start(now);
         sweepOsc2.stop(now + 0.35);
 
+        // ベル音（ウインドチャイム）用のステレオリバーブ（交差フィードバック・ディレイ）を作成
         const bellDelayL = audioCtx.createDelay();
         const bellDelayR = audioCtx.createDelay();
         const bellFeedbackL = audioCtx.createGain();
         const bellFeedbackR = audioCtx.createGain();
-        const bellCrossL = audioCtx.createGain();
-        const bellCrossR = audioCtx.createGain();
+        const bellCrossL = audioCtx.createGain(); // 交差フィードバック (L -> R)
+        const bellCrossR = audioCtx.createGain(); // 交差フィードバック (R -> L)
         const bellDelayFilterL = audioCtx.createBiquadFilter();
         const bellDelayFilterR = audioCtx.createBiquadFilter();
         
+        // ステレオ出力用のパンナー
         let delayPannerL = null;
         let delayPannerR = null;
         try {
             if (audioCtx.createStereoPanner) {
                 delayPannerL = audioCtx.createStereoPanner();
                 delayPannerR = audioCtx.createStereoPanner();
-                delayPannerL.pan.setValueAtTime(-0.7, now);
-                delayPannerR.pan.setValueAtTime(0.7, now);
+                delayPannerL.pan.setValueAtTime(-0.7, now); // 左側に定位
+                delayPannerR.pan.setValueAtTime(0.7, now);  // 右側に定位
             }
         } catch (e) {}
-        bellDelayL.delayTime.setValueAtTime(0.095, now);
-        bellDelayR.delayTime.setValueAtTime(0.145, now);
+        bellDelayL.delayTime.setValueAtTime(0.095, now); // L側遅延 95ms
+        bellDelayR.delayTime.setValueAtTime(0.145, now); // R側遅延 145ms
         
-        bellFeedbackL.gain.setValueAtTime(0.52, now);
-        bellFeedbackR.gain.setValueAtTime(0.48, now);
+        bellFeedbackL.gain.setValueAtTime(0.52, now); // フィードバック量 52%
+        bellFeedbackR.gain.setValueAtTime(0.48, now); // フィードバック量 48%
         
-        bellCrossL.gain.setValueAtTime(0.20, now);
-        bellCrossR.gain.setValueAtTime(0.20, now);
+        bellCrossL.gain.setValueAtTime(0.20, now);    // 交差フィードバック量 20%
+        bellCrossR.gain.setValueAtTime(0.20, now);    // 交差フィードバック量 20%
         bellDelayFilterL.type = 'highpass';
-        bellDelayFilterL.frequency.setValueAtTime(1500, now);
+        bellDelayFilterL.frequency.setValueAtTime(1500, now); // 1.5kHzハイパスでクリアな高域残響のみ残す
         bellDelayFilterR.type = 'highpass';
-        bellDelayFilterR.frequency.setValueAtTime(1200, now);
+        bellDelayFilterR.frequency.setValueAtTime(1200, now); // R側は少し低めからカバー
 
+        // Lチャンネルフィードバックループ接続
         bellDelayL.connect(bellDelayFilterL);
         bellDelayFilterL.connect(bellFeedbackL);
         bellFeedbackL.connect(bellDelayL);
         
+        // Rチャンネルフィードバックループ接続
         bellDelayR.connect(bellDelayFilterR);
         bellDelayFilterR.connect(bellFeedbackR);
         bellFeedbackR.connect(bellDelayR);
         
+        // 交差フィードバック（Lの遅延がRのフィードバックへ、Rの遅延がLのフィードバックへ）
         bellDelayFilterL.connect(bellCrossL);
         bellCrossL.connect(bellDelayR);
         bellDelayFilterR.connect(bellCrossR);
         bellCrossR.connect(bellDelayL);
         
+        // メイン出力への接続（ステレオ定位処理）
         if (delayPannerL && delayPannerR) {
             bellDelayFilterL.connect(delayPannerL);
             delayPannerL.connect(audioCtx.destination);
@@ -3529,16 +3843,20 @@ function playMeteorBigExplosionSound(originX) {
             bellDelayFilterR.connect(audioCtx.destination);
         }
 
+        // キラキラ感のある超高域中心のウィンドチャイムスケール
         const scale = [
-            1046.50, 1174.66, 1318.51, 1567.98, 1760.00,
-            2093.00, 2349.32, 2637.02, 3135.96, 3520.00,
-            4186.01, 4698.63, 5274.04, 6271.93, 7040.00,
-            8372.02, 9397.26
+            1046.50, 1174.66, 1318.51, 1567.98, 1760.00,   // C6, D6, E6, G6, A6 (澄んだ高音)
+            2093.00, 2349.32, 2637.02, 3135.96, 3520.00,   // C7, D7, E7, G7, A7 (煌めく超高音)
+            4186.01, 4698.63, 5274.04, 6271.93, 7040.00,   // C8, D8, E8, G8, A8 (突き抜ける極高音)
+            8372.02, 9397.26                               // C9, D9 (ウインドチャイムの極小金属棒の超音波域)
         ];
-        const starCount = 42;
+        const starCount = 42; // 音数を少し増やしてアルペジオを引き立てる
         
         for (let i = 0; i < starCount; i++) {
+            // アルペジオタイムをさらに長く（0.95秒＋揺らぎ）
             const timeOffset = (i / starCount) * 0.95 + Math.random() * 0.06;
+            
+            // 概ね上昇するグリッサンドのインデックス計算
             const scaleIndex = Math.min(scale.length - 1, Math.floor((i / starCount) * scale.length + (Math.random() * 3 - 1.5)));
             const freq = scale[Math.max(0, scaleIndex)];
             
@@ -3554,25 +3872,29 @@ function playMeteorBigExplosionSound(originX) {
             const destNode = panner ? panner : audioCtx.destination;
             if (panner) {
                 panner.connect(audioCtx.destination);
+                // シャラシャラと鳴りながら、ステレオ定位も左から右へ広がるように演出
                 const spread = (Math.random() - 0.5) * 1.8;
                 panner.pan.setValueAtTime(Math.max(-1.0, Math.min(1.0, basePan + spread)), now + timeOffset);
             }
             
+            // 余韻を180ms〜320msに長くしてウインドチャイムの金属棒の余韻を再現
             const duration = 0.18 + Math.random() * 0.14;
             
+            // A. 三角波 (ウインドチャイムのベース音、控えめ)
             const osc = audioCtx.createOscillator();
             const gain = audioCtx.createGain();
             osc.connect(gain);
             gain.connect(destNode);
-            gain.connect(bellDelayL);
-            gain.connect(bellDelayR);
+            gain.connect(bellDelayL); // リバーブ左バスへ送る
+            gain.connect(bellDelayR); // リバーブ右バスへ送る
             osc.type = 'triangle';
             osc.frequency.setValueAtTime(freq, now + timeOffset);
             
             gain.gain.setValueAtTime(0, now + timeOffset);
-            gain.gain.linearRampToValueAtTime(0.015, now + timeOffset + 0.001);
+            gain.gain.linearRampToValueAtTime(0.015, now + timeOffset + 0.001); // 1msの極速アタック
             gain.gain.exponentialRampToValueAtTime(0.0001, now + timeOffset + duration);
             
+            // B. 非調和倍音 2.76倍 (ウィンドチャイムの金属特有の非整数の響き)
             const oscMetal = audioCtx.createOscillator();
             const gainMetal = audioCtx.createGain();
             oscMetal.connect(gainMetal);
@@ -3587,6 +3909,7 @@ function playMeteorBigExplosionSound(originX) {
             gainMetal.gain.linearRampToValueAtTime(0.015, now + timeOffset + 0.0015);
             gainMetal.gain.exponentialRampToValueAtTime(0.0001, now + timeOffset + durMetal);
             
+            // C. 4倍音 (サイン波で高い澄んだ響き)
             const oscHigh = audioCtx.createOscillator();
             const gainHigh = audioCtx.createGain();
             oscHigh.connect(gainHigh);
@@ -3601,6 +3924,7 @@ function playMeteorBigExplosionSound(originX) {
             gainHigh.gain.linearRampToValueAtTime(0.010, now + timeOffset + 0.001);
             gainHigh.gain.exponentialRampToValueAtTime(0.0001, now + timeOffset + durHigh);
             
+            // D. 金属製アタック音 5.4倍音
             const hitOsc = audioCtx.createOscillator();
             const hitGain = audioCtx.createGain();
             hitOsc.connect(hitGain);
@@ -3639,6 +3963,7 @@ function playMeteorBigExplosionSound(originX) {
             }, (timeOffset + duration + 0.25) * 1000);
         }
         
+        // リバーブ全体の接続解除クリーンアップ（2.6秒に延長）
         setTimeout(() => {
             try {
                 sweepOsc1.disconnect();
@@ -3665,17 +3990,13 @@ function playMeteorBigExplosionSound(originX) {
     }
 }
 
+// 炭酸バブルサウンドの再生（異なる色の玉5個を2回連続でクリアしたときの大爆発で再生）
 function playCarbonatedBubbleSound(originX) {
-    initAudio();
     if (!audioCtx) return;
 
-    if (audioCtx.state !== 'running') {
-        audioCtx.resume().then(() => {
-            playCarbonatedBubbleSound(originX);
-        }).catch(() => {});
-        return;
-    }
+    if (audioCtx.state !== 'running') return;
 
+    // キャッシュが生成されていなければ生成を試みる
     if (!carbonatedBufferCache) {
         pregenerateCarbonatedBuffer();
     }
@@ -3685,13 +4006,16 @@ function playCarbonatedBubbleSound(originX) {
         const now = audioCtx.currentTime;
         const durationSeconds = 6.5;
 
+        // 発生元のX座標から基準定位（パン）を計算（画面の左端＝-1.0、右端＝+1.0）
         const basePan = (originX !== undefined && showerCanvas) 
-            ? Math.max(-1.0, Math.min(1.0, (originX / showerCanvas.width) * 2 - 1)) 
+            ? Math.max(-1.0, Math.min(1.0, (originX / viewW) * 2 - 1)) 
             : 0;
 
+        // 3. AudioBufferSourceNode の作成と再生
         const noiseNode = audioCtx.createBufferSource();
         noiseNode.buffer = carbonatedBufferCache;
 
+        // タップ位置に応じたベース定位を設定するパンナー
         let basePanner = null;
         try {
             if (audioCtx.createStereoPanner) {
@@ -3700,11 +4024,13 @@ function playCarbonatedBubbleSound(originX) {
             }
         } catch (e) {}
 
+        // ハイパスフィルターで高音のシュワシュワ成分のみを取り出す（一括適用）
         const filterNode = audioCtx.createBiquadFilter();
         filterNode.type = 'highpass';
         filterNode.frequency.setValueAtTime(4200, now);
         filterNode.frequency.exponentialRampToValueAtTime(2200, now + durationSeconds - 0.5);
 
+        // ディレイ空間エコー回路
         const delayNodeL = audioCtx.createDelay(1.5);
         const delayNodeR = audioCtx.createDelay(1.5);
 
@@ -3738,6 +4064,7 @@ function playCarbonatedBubbleSound(originX) {
             }
         } catch (e) {}
 
+        // 接続
         if (basePanner) {
             noiseNode.connect(basePanner);
             basePanner.connect(filterNode);
@@ -3745,6 +4072,7 @@ function playCarbonatedBubbleSound(originX) {
             noiseNode.connect(filterNode);
         }
         
+        // ディレイへの接続（センド）
         filterNode.connect(delayNodeL);
         filterNode.connect(delayNodeR);
 
@@ -3756,6 +4084,7 @@ function playCarbonatedBubbleSound(originX) {
         delayFilterR.connect(delayFeedbackR);
         delayFeedbackR.connect(delayNodeR);
 
+        // クロスフィードバック
         const delayCrossL = audioCtx.createGain();
         const delayCrossR = audioCtx.createGain();
         delayCrossL.gain.setValueAtTime(0.18, now); 
@@ -3765,6 +4094,7 @@ function playCarbonatedBubbleSound(originX) {
         delayFilterR.connect(delayCrossR);
         delayCrossR.connect(delayNodeL);
 
+        // 出力ゲイン（最終音量微調整用）
         const outputGain = audioCtx.createGain();
         outputGain.gain.setValueAtTime(1.0, now);
         outputGain.gain.exponentialRampToValueAtTime(0.0001, now + durationSeconds);
@@ -3785,6 +4115,7 @@ function playCarbonatedBubbleSound(originX) {
         noiseNode.start(now);
         noiseNode.stop(now + durationSeconds + 0.1);
 
+        // クリーンアップ
         setTimeout(() => {
             try {
                 noiseNode.disconnect();
@@ -3807,36 +4138,55 @@ function playCarbonatedBubbleSound(originX) {
     }
 }
 
+
+
 // =============================================================
 // 6. メインループ ＆ 初期化
 // =============================================================
 
 function mainLoop(timestamp) {
-    const elapsed = timestamp - _lastFrameTime;
-    if (elapsed < FRAME_INTERVAL) {
-        requestAnimationFrame(mainLoop);
-        return;
+    try {
+        // フレームレート制限（モバイルは30fps、PCは60fps）
+        const elapsed = timestamp - _lastFrameTime;
+        if (elapsed < FRAME_INTERVAL) {
+            requestAnimationFrame(mainLoop);
+            return;
+        }
+        _lastFrameTime = timestamp - (elapsed % FRAME_INTERVAL);
+        const frameStart = performance.now();
+        
+        // iOSのツールバー伸縮で毎フレームリサイズしない（閾値付き）
+        if (showerCanvas && (Math.abs(viewW - window.innerWidth) > 8 || Math.abs(viewH - window.innerHeight) > 8)) {
+            resizeShowerCanvas();
+        }
+        
+        // バックグラウンドのマインドシャワーの更新と描画（泡もここで描画される）
+        updateShower();
+        updateBubbles(timestamp);
+        updateMeteors();
+        updateBreathGuide(timestamp);
+        
+        drawShower();
+
+        const frameCost = performance.now() - frameStart;
+        if (frameCost > FRAME_INTERVAL * 1.35) {
+            _heavyFrameStreak = Math.min(30, _heavyFrameStreak + 1);
+        } else {
+            _heavyFrameStreak = Math.max(0, _heavyFrameStreak - 1);
+        }
+    } catch (err) {
+        console.warn('mainLoop error:', err);
     }
-    _lastFrameTime = timestamp - (elapsed % FRAME_INTERVAL);
-    
-    if (showerCanvas && (showerCanvas.width !== window.innerWidth || showerCanvas.height !== window.innerHeight)) {
-        resizeShowerCanvas();
-    }
-    
-    updateShower();
-    updateBubbles(timestamp);
-    updateMeteors();
-    updateBreathGuide(timestamp);
-    
-    drawShower();
-    
     requestAnimationFrame(mainLoop);
 }
 
+// リフレッシュゲージの進行管理（通常プレイ・エンドレスプレイの両方に対応）
 function incrementPopProgress() {
     totalPops++;
     sessionPops++;
     if (infiniteMode && totalPops >= REFRESH_TARGET) {
+        // 無限モード時の満タンイベント：
+        // ゲージを一瞬100%にしてから、お祝いの音を鳴らしてリセットする
         refreshProgress = 1;
         updateRefreshGauge();
         
@@ -3856,13 +4206,17 @@ function incrementPopProgress() {
     }
 }
 
+// 連鎖バブルがタップされた際に、周囲の泡を巻き込んで連鎖爆発させる
 function triggerChainReaction(parentBubble) {
     if (!parentBubble) return;
 
-    const chainRadius = 500;
+    const chainRadius = 500; // 連鎖する判定半径（500px）
+    const nowReserve = performance.now();
 
+    // 1. 半径500px以内の連鎖対象の泡を収集
     const targetBubbles = [];
     bubbles.forEach(b => {
+        // すでにポップ中(popping)またはドミノ予約済み(reserved)の泡は除外
         if (b === parentBubble || b.popping || b.reserved) return;
 
         const dx = b.x - parentBubble.x;
@@ -3871,48 +4225,70 @@ function triggerChainReaction(parentBubble) {
 
         if (dist <= chainRadius) {
             targetBubbles.push({ bubble: b, dist: dist });
-            b.reserved = true;
+            b.reserved = true; // 重複巻き込みを防ぐために先に予約フラグを立てる
+            b.reservedAt = nowReserve;
         }
     });
 
+    // 2. 距離が近い順（昇順）にソート
     targetBubbles.sort((a, b) => a.dist - b.dist);
 
-    const dominoInterval = 90;
+    // 3. ドミノ倒しのように1つずつ時間差（一定の間隔）で破裂をスケジュール
+    const dominoInterval = 90; // 各破裂の間隔 (90ms)
 
     targetBubbles.forEach((target, index) => {
         const b = target.bubble;
-        const delayTime = (index + 1) * dominoInterval;
+        const delayTime = (index + 1) * dominoInterval; // 1個ずつ順番に遅延を増やす
 
         setTimeout(() => {
-            if (!gameActive) return;
+            if (!gameActive) {
+                b.reserved = false;
+                b.reservedAt = 0;
+                return;
+            }
+            // ユーザーが先にタップして破裂済みなら二重処理しない
+            if (b.popping || b.popTriggered) {
+                b.reserved = false;
+                b.reservedAt = 0;
+                return;
+            }
 
+            b.reserved = false;
+            b.reservedAt = 0;
+            // 時間差の番が来たらポップアニメーションを開始する
             b.popping = true;
 
+            // 巻き込まれたバブルのポップトリガー処理
             if (!b.popTriggered) {
                 b.popTriggered = true;
                 
+                // コンボをさらにアップして上昇アルペジオにする
                 comboCount++;
                 if (comboCount > maxComboCount) {
                     maxComboCount = comboCount;
                 }
                 
+                // ポップ音とエフェクトの再生（連打時は間引き）
                 playPopSound(comboCount, b.x);
                 
+                // 連鎖中の振動は、すべて震わせるとノイズになるので3回に1回だけプチッと振動させる
                 if (comboCount % 3 === 0) {
                     triggerHaptic('light');
                 }
                 
+                // 巻き込まれた泡が別の「連鎖バブル（金色）」なら、さらにそこから連鎖を誘発
                 if (b.type === 'chain') {
                     triggerChainReaction(b);
                 }
                 
                 const rippleSize = 100 + Math.min(comboCount, 12) * 20;
-                const particleCount = 8 + Math.min(comboCount, 12) * 3;
+                const particleCount = IS_MOBILE ? 10 : (14 + Math.min(comboCount, 12) * 3);
                 const rippleSpeed = 2.5 + Math.min(comboCount, 12) * 0.25;
 
                 createShowerRipple(b.x, b.y, rippleSize, rippleSpeed, b.hue);
-                createShowerParticles(b.x, b.y, particleCount, b.hue, false);
+                createChainSmoke(b.x, b.y, particleCount, b.hue);
                 
+                // リフレッシュゲージも進行
                 incrementPopProgress();
                 
                 if (comboCount >= 2) {
@@ -3928,31 +4304,42 @@ function triggerChainReaction(parentBubble) {
         }, delayTime);
     });
 
-    createShowerRipple(parentBubble.x, parentBubble.y, 500, 4.2, 210);
-    createShowerParticles(parentBubble.x, parentBubble.y, 35, 210, false);
+    // 連鎖バブル中心部にエネルギー放出の追加特殊波紋（半径500pxの白銀波紋）
+    createShowerRipple(parentBubble.x, parentBubble.y, 500, 4.2, 210); // 白銀の特大波紋
+    createChainSmoke(parentBubble.x, parentBubble.y, IS_MOBILE ? 24 : 40, 210);
 }
 
+// 泡をタップしてポップする（ヒット判定）
 function tryPopBubble(clientX, clientY) {
     if (!gameActive) return false;
     
+    // 手前（後から描画された）泡から判定
     for (let i = bubbles.length - 1; i >= 0; i--) {
         const b = bubbles[i];
-        if (b.popping || b.reserved) continue;
+        if (b.popping) continue; // ポップ中のみ除外（連鎖予約中はタップで即ポップ可）
         
+        // ジャイロ視差と同じ座標ズレを加味して判定する
         const bOffsetX = currentGyroX * 0.4 * b.radius;
         const bOffsetY = currentGyroY * 0.4 * b.radius;
         const dx = clientX - (b.x + bOffsetX);
         const dy = clientY - (b.y + bOffsetY);
         const dist = Math.sqrt(dx * dx + dy * dy);
         
-        const hitRadius = Math.max(b.radius * 1.4, 32);
+        // 半径の1.55倍＋最小サイズ保証（スマホではさらに余裕を持たせる）
+        const minHit = IS_MOBILE ? 44 : 32;
+        const hitRadius = Math.max(b.radius * (IS_MOBILE ? 1.55 : 1.4), minHit);
         if (dist <= hitRadius) {
+            // 連鎖予約中の泡をタップしたら予約を解除して即ポップ
+            b.reserved = false;
+            b.reservedAt = 0;
             b.popping = true;
             
+            // 瞑想モード時の静かなタップ処理
             if (meditationMode) {
-                playPopSound(1, b.x);
+                playPopSound(1, b.x); // 音階上昇させずに基本音階で穏やかに鳴らす
                 triggerHaptic('light');
                 
+                // ガイドテキストを消す（初回タップ後）
                 if (!guideHidden) {
                     guideHidden = true;
                     const guide = document.getElementById('guide-text');
@@ -3963,6 +4350,7 @@ function tryPopBubble(clientX, clientY) {
                 return true;
             }
             
+            // コンボ管理
             const now = performance.now();
             if (now - lastPopTime < COMBO_WINDOW) {
                 comboCount++;
@@ -3974,13 +4362,14 @@ function tryPopBubble(clientX, clientY) {
                 maxComboCount = comboCount;
             }
             
+            // 特殊泡またはフィーバーに応じた効果音再生
             if (b.type === 'silver') {
                 feverActive = true;
-                feverEndTime = now + 8000;
+                feverEndTime = now + 8000; // フィーバータイムは8秒間
                 playFeverStartSound(b.x);
                 playCarbonatedBubbleSound(b.x);
                 triggerHaptic('heavy');
-                createShowerRipple(b.x, b.y, 280, 3.2, 210);
+                createShowerRipple(b.x, b.y, 280, 3.2, 210); // 白銀の特大波紋 (色相210)
             } else if (b.type === 'chain') {
                 playPopSound(comboCount, b.x);
                 triggerHaptic('medium');
@@ -3989,11 +4378,13 @@ function tryPopBubble(clientX, clientY) {
                 playPopSound(comboCount, b.x);
                 triggerHaptic('light');
                 
+                // フィーバー中ならさらに追加 of チャイム音をバックに薄く重ねる
                 if (feverActive) {
                     playFeverChimeBackground(b.x);
                 }
             }
             
+            // 同色3連続タップの判定
             tappedColorHistory.push(b.color);
             if (tappedColorHistory.length > 3) {
                 tappedColorHistory.shift();
@@ -4002,9 +4393,10 @@ function tryPopBubble(clientX, clientY) {
                 tappedColorHistory[0] === tappedColorHistory[1] &&
                 tappedColorHistory[1] === tappedColorHistory[2]) {
                 triggerMeteorShower(b.x, b.y);
-                tappedColorHistory = [];
+                tappedColorHistory = []; // トリガー後の履歴をリセット
             }
             
+            // 大爆発判定用の履歴管理 (直近10タップ分)
             popColorHistory.push(b.color);
             if (popColorHistory.length > 10) {
                 popColorHistory.shift();
@@ -4062,9 +4454,10 @@ function tryPopBubble(clientX, clientY) {
 
 
 // =============================================================
-// 4. UI譖ｴ譁ｰ
+// 4. UI更新
 // =============================================================
 
+// 褒める言葉の定義（日本語＋英語）
 const COMBO_PRAISES = [
     { jp: "スッキリ!", en: "Clear" },
     { jp: "快感!", en: "Pleasure!" },
@@ -4110,6 +4503,7 @@ const ABSTRACT_PATTERNS = [
 let lastPraiseIdx = -1;
 let lastSpecialPraiseIdx = -1;
 
+// コンボ数に応じて褒める言葉（日本語＋英語）または記号・やわらかコメントを画面中央に表示
 function showCombo(count) {
     if (meditationMode) return;
     const el = document.getElementById('combo-display');
@@ -4167,6 +4561,7 @@ function showCombo(count) {
         }
     }
     
+    // セキュアなDOM APIで組み立て
     el.replaceChildren();
     
     const jpDiv = document.createElement('div');
@@ -4185,6 +4580,7 @@ function showCombo(count) {
         el.appendChild(enDiv);
     }
     
+    // モバイル画面（幅600px以下）の場合のみ、文字数に応じてフォントサイズを動的に調整する
     if (window.innerWidth <= 600) {
         if (popEffectMode === 'pattern') {
             jpDiv.style.fontSize = '8vw';
@@ -4197,11 +4593,13 @@ function showCombo(count) {
             }
         }
     } else {
+        // デスクトップサイズ時はインラインスタイルをクリアしてCSS定義に委ねる
         jpDiv.style.fontSize = '';
         if (enDiv) enDiv.style.fontSize = '';
     }
     
     el.classList.remove('show');
+    // リフローを強制してアニメーションを再トリガー
     void el.offsetWidth;
     el.classList.add('show');
 }
@@ -4224,7 +4622,7 @@ function updateBreathGuide(timestamp) {
     const dt = timestamp - lastBreathUpdateTime;
     lastBreathUpdateTime = timestamp;
     
-    let cycleDuration = 10000;
+    let cycleDuration = 10000; // デフォルト (coherent)
     if (breathPattern === '478') {
         cycleDuration = 19000;
     } else if (breathPattern === 'box') {
@@ -4243,6 +4641,7 @@ function updateBreathGuide(timestamp) {
     let labelEn = '';
     let progress = 0;
     
+    // パターンごとのステートとスケール判定
     if (breathPattern === '478') {
         if (breathCycleTime < 4000) {
             state = 'inhale';
@@ -4271,7 +4670,7 @@ function updateBreathGuide(timestamp) {
             labelJp = '息を吸って';
             labelEn = 'Inhale';
         } else if (breathCycleTime < 8000) {
-            state = 'hold';
+            state = 'hold'; // 満ちた状態でのキープ
             progress = (breathCycleTime - 4000) / 4000;
             scale = 1.6;
             labelJp = '止めて';
@@ -4283,13 +4682,13 @@ function updateBreathGuide(timestamp) {
             labelJp = '吐いて';
             labelEn = 'Exhale';
         } else {
-            state = 'hold-empty';
+            state = 'hold-empty'; // 空の状態でのキープ
             progress = (breathCycleTime - 12000) / 4000;
             scale = 0.9;
             labelJp = '止めて';
             labelEn = 'Hold';
         }
-    } else {
+    } else { // coherent
         if (breathCycleTime < 5000) {
             state = 'inhale';
             progress = breathCycleTime / 5000;
@@ -4305,6 +4704,11 @@ function updateBreathGuide(timestamp) {
         }
     }
     
+    // Smooth color interpolation between states:
+    // Inhale (Teal: 45, 212, 191)
+    // Hold (Amber: 251, 191, 36)
+    // Exhale (Indigo: 99, 102, 241)
+    // Hold-Empty (Purple/Dark Indigo: 139, 92, 246)
     let r = 129, g = 195, b = 215;
     let fill = 0.05;
     let glow = 0.1;
@@ -4312,6 +4716,7 @@ function updateBreathGuide(timestamp) {
     if (state === 'inhale') {
         fill = 0.02 + 0.16 * easeInOutQuad(progress);
         glow = 0.1 + scale * 0.15;
+        // 前の状態からTealへの変化
         const startColor = breathPattern === 'box' ? {r: 139, g: 92, b: 246} : {r: 99, g: 102, b: 241};
         r = Math.round(startColor.r + (45 - startColor.r) * progress);
         g = Math.round(startColor.g + (212 - startColor.g) * progress);
@@ -4325,6 +4730,7 @@ function updateBreathGuide(timestamp) {
     } else if (state === 'exhale') {
         fill = 0.18 - 0.16 * easeInOutQuad(progress);
         glow = 0.05 + scale * 0.2;
+        // AmberからIndigoへの変化
         const startColor = (breathPattern === 'coherent') ? {r: 45, g: 212, b: 191} : {r: 251, g: 191, b: 36};
         r = Math.round(startColor.r + (99 - startColor.r) * progress);
         g = Math.round(startColor.g + (102 - startColor.g) * progress);
@@ -4332,6 +4738,7 @@ function updateBreathGuide(timestamp) {
     } else if (state === 'hold-empty') {
         fill = 0.02;
         glow = 0.08;
+        // IndigoからPurpleへの変化
         r = Math.round(99 + (139 - 99) * progress);
         g = Math.round(102 + (92 - 102) * progress);
         b = Math.round(241 + (246 - 241) * progress);
@@ -4351,19 +4758,23 @@ function updateBreathGuide(timestamp) {
     if (textEl && breathState !== state) {
         breathState = state;
 
+        // 言語モードに合わせてテキストを構築
         let breathHtml = '';
         if (langMode === 'en') {
+            // 英語のみ: en-sub を大きく表示するため span を使わず直接
             breathHtml = `<span class="en-sub">${labelEn}</span>`;
         } else if (langMode === 'ja') {
+            // 日本語のみ
             breathHtml = `<span class="ja-only">${labelJp}</span>`;
         } else {
+            // Bilingual (デフォルト)
             breathHtml = `<span class="ja-only">${labelJp}</span><br><span class="en-sub">${labelEn}</span>`;
         }
         textEl.innerHTML = breathHtml;
 
         textEl.style.transition = 'none';
         textEl.style.opacity = '0';
-        void textEl.offsetWidth;
+        void textEl.offsetWidth; // reflow
         textEl.style.transition = 'opacity 0.5s ease';
         textEl.style.opacity = '1';
     }
@@ -4392,7 +4803,7 @@ function updateRefreshGauge() {
 
 
 // =============================================================
-// 5. 繧ｲ繝ｼ繝迥ｶ諷狗ｮ｡逅
+// 5. ゲーム開始 / 終了
 // =============================================================
 
 function startGame() {
@@ -4408,9 +4819,9 @@ function startGame() {
     refreshProgress = 0;
     gameStartTime = performance.now();
     gameActive = true;
-    isResuming = false;
     guideHidden = false;
-    nextSpawnTime = performance.now() + 400;
+    nextSpawnTime = performance.now() + 400; // 間隔を置いて開始させる
+    pendingAmbientStart = true; // resume 完了待ちでも確実に音を開始する
 
     // 体験版タイマー初期化と起動
     if (demoTimer) {
@@ -4418,19 +4829,15 @@ function startGame() {
         demoTimer = null;
     }
     demoTimeLeft = 90;
-    const timerContainer = document.getElementById('demo-timer-container');
-    const timerText = document.getElementById('demo-timer-text');
-    if (timerContainer) {
-        timerContainer.classList.add('active');
+    const demoTimerContainer = document.getElementById('demo-timer-container');
+    const demoTimerText = document.getElementById('demo-timer-text');
+    if (demoTimerContainer) demoTimerContainer.classList.add('active');
+    if (demoTimerText) {
+        demoTimerText.textContent = '01:30';
+        demoTimerText.classList.remove('danger');
     }
-    if (timerText) {
-        timerText.textContent = '01:30';
-        timerText.classList.remove('danger');
-    }
-
     trialPlayCount++;
     sessionStorage.setItem('brain_reflexo_trial_play_count', trialPlayCount.toString());
-
     demoTimer = setInterval(() => {
         if (!gameActive) {
             clearInterval(demoTimer);
@@ -4445,8 +4852,10 @@ function startGame() {
         }
     }, 1000);
     
+    // UI初期化
     updateRefreshGauge();
     
+    // プレイモード表示の更新
     const modeBadge = document.getElementById('play-mode-badge');
     if (modeBadge) {
         if (meditationMode) {
@@ -4527,6 +4936,8 @@ function startGame() {
         if (window.updateBreathGuideUI) window.updateBreathGuideUI(breathGuideEnabled);
     }
     
+
+
     const comboEl = document.getElementById('combo-display');
     if (comboEl) {
         comboEl.classList.remove('show');
@@ -4537,14 +4948,25 @@ function startGame() {
         overlay.classList.remove('active');
     }
     
+    // 最初の柔らかなアンビエント音を開始
     startAmbientSound();
 
+    // 開始直後からタップできるように泡を先出し（スポーン待ちで無反応に見えないようにする）
     if (meditationMode) {
         createBubble('silver');
+    } else {
+        createBubble();
+        createBubble();
+        createBubble();
+        nextSpawnTime = performance.now() + 350;
     }
 }
 
 
+// iPhone マルチファイル起動失敗検知用（index.html の案内バナーが参照）
+window.__BRAIN_REFLEXO_OK = true;
+
+// ページ全体（スタイルシートやレイアウト含む）の読み込み完了後に初期化を実行（レイアウト確定後にサイズ取得するため）
 if (document.readyState === 'complete') {
     initApp();
 } else {
